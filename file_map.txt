@@ -1,0 +1,258 @@
+# File Map: Variables and Functions (d:\ML\experimental) with file paths
+
+# pipeline_steps.py (d:\ML\experimental\pipeline_steps.py)
+## Functions:
+- aggregate_cv_results(outer_fold_results_reg, outer_fold_results_cls)
+- select_final_model(
+    outer_fold_results_reg,
+    outer_fold_results_cls,
+    all_fold_models_reg,
+    all_fold_models_cls,
+    fold_scalers,
+    fold_selectors,
+    fold_selected_features_list,
+    feature_names
+)
+- evaluate_on_test_set(
+    final_regressor,
+    final_classifier,
+    X_test,
+    y_test_reg,
+    y_test_cls,
+    selected_features_final,
+    feature_names,
+    save_results
+)
+- run_shap_analysis(
+    final_regressor,
+    final_classifier,
+    X_test,
+    selected_features_final,
+    feature_names,
+    save_results
+)
+- save_artifacts(
+    final_regressor,
+    final_classifier,
+    final_scaler,
+    final_selector,
+    selected_features_final,
+    feature_names,
+    save_models,
+    save_features,
+    save_results,
+    output_dir
+)
+
+# config.py (d:\ML\experimental\config.py)
+## Variables:
+- DATA_FILE = "synthetic_data.csv" # Updated to use synthetic data. !!! CHANGE BACK TO "A2BBO6_matched.csv" FOR REAL DATA !!!
+- TEST_SIZE = 0.2  # Proportion of data held out for the final unseen test set
+- N_SPLITS_OUTER_CV = 2 # Number of folds for outer cross-validation. !!! SET BACK TO 5 for real data !!!
+- RANDOM_STATE = 42   # Set random seed for reproducibility
+- FEATURE_SELECTION_METHOD = 'lgbm'
+- K_BEST_FEATURES = 50 # Number of features for SelectKBest
+- STACKING_CV_FOLDS = 5 # Number of folds for inner CV within stacking meta-learner training
+- TUNE_ALL_BASE_MODELS = True # Set this according to preference
+- OPTUNA_TRIALS_MAIN = 5  # Number of trials for key models (LGBM/XGB)
+- OPTUNA_TRIALS_OTHER = 5 # Number of trials for other base models
+- OPTUNA_TIMEOUT = None    # Timeout in seconds for each Optuna study (None for no timeout)
+- SHAP_BACKGROUND_SAMPLES = 50
+- SHAP_EXPLAIN_SAMPLES = 20
+- OUTPUT_DIR = 'results'
+- SAVE_MODELS = True # Save the best model from each fold and the final test models
+- SAVE_FEATURES = True
+- SAVE_RESULTS = True
+- STRATIFY_SPLIT = False # Set to True for real data if appropriate
+
+# main.py (d:\ML\experimental\main.py)
+## Variables:
+- df: DataFrame loaded from DATA_FILE
+- X: Feature DataFrame (all columns except last two)
+- y_reg: Regression target (second to last column)
+- y_cls: Classification target (last column)
+- feature_names: List of feature names
+- stratify_targets: Classification target for stratified split (if applicable)
+- X_train_val: Training/Validation features
+- X_test: Test features
+- y_train_val_reg: Training/Validation regression target
+- y_test_reg: Test regression target
+- y_train_val_cls: Training/Validation classification target
+- y_test_cls: Test classification target
+- COMPUTE_PARAMS: Dictionary of compute device parameters from get_compute_device_params()
+- kf_outer: KFold instance for outer cross-validation
+- outer_fold_results_reg: Dictionary for regression results
+- outer_fold_results_cls: Dictionary for classification results
+- fold_selected_features_list: List of selected features per fold
+- fold_best_params_reg: Dictionary of best regression parameters per fold
+- fold_best_params_cls: Dictionary of best classification parameters per fold
+- fold_scalers: List of scalers per fold
+- fold_selectors: List of feature selectors per fold
+- all_fold_models_reg: List of regression models per fold
+- all_fold_models_cls: List of classification models per fold
+- OPTIMIZATION_FUNCTIONS_REG: Dictionary of regression optimization functions
+- OPTIMIZATION_FUNCTIONS_CLS: Dictionary of classification optimization functions
+- MODEL_REGRESSORS: Dictionary of regression models
+- MODEL_CLASSIFIERS: Dictionary of classification models
+- STACKING_META_REGRESSOR_CANDIDATES: Dictionary of regression meta-model candidates
+- STACKING_META_CLASSIFIER_CANDIDATES: Dictionary of classification meta-model candidates
+
+## Functions:
+- None (all functions are imported from other modules)
+
+# model_definitions.py (d:\ML\experimental\model_definitions.py)
+## Variables:
+- RANDOM_STATE = 42
+- COMPUTE_PARAMS: Dictionary of compute device parameters
+
+## Functions:
+- get_base_regressors(random_state): Returns dictionary of regression models
+- get_base_classifiers(random_state): Returns dictionary of classification models
+- get_meta_regressor_candidates(random_state): Returns dictionary of regression meta-model candidates
+- get_meta_classifier_candidates(random_state): Returns dictionary of classification meta-model candidates
+- get_final_model_instance(model_type, random_state): Returns final model instance
+- optimize_lgbm_reg(trial, X_tr, y_tr, X_va, y_va, compute_params=None)
+- optimize_xgb_reg(trial, X_tr, y_tr, X_va, y_va, compute_params=None)
+- optimize_ridge(trial, X_tr, y_tr, X_va, y_va, compute_params=None)
+- optimize_rf_reg(trial, X_tr, y_tr, X_va, y_va, compute_params=None)
+- optimize_gb_reg(trial, X_tr, y_tr, X_va, y_va, compute_params=None)
+- optimize_bayes_ridge(trial, X_tr, y_tr, X_va, y_va, compute_params=None)
+- optimize_lgbm_cls(trial, X_tr, y_tr, X_va, y_va, compute_params=None)
+- optimize_xgb_cls(trial, X_tr, y_tr, X_va, y_va, compute_params=None)
+- optimize_logistic_regression(trial, X_tr, y_tr, X_va, y_va, compute_params=None)
+- optimize_rf_cls(trial, X_tr, y_tr, X_va, y_va, compute_params=None)
+- optimize_gb_cls(trial, X_tr, y_tr, X_va, y_va, compute_params=None)
+- select_best_stack(
+    base_model_definitions,
+    tuned_base_params,
+    meta_candidates,
+    X_tr,
+    y_tr,
+    X_va,
+    y_va,
+    task,
+    cv_folds,
+    random_state,
+    compute_params
+)
+
+# outer_cv.py (d:\ML\experimental\outer_cv.py)
+## Variables:
+- start_time_cv: Timestamp for outer CV start
+- fold_start_time: Timestamp for fold start
+- X_tr_fold: Training fold features
+- X_va_fold: Validation fold features
+- y_tr_reg_fold: Training fold regression target
+- y_va_reg_fold: Validation fold regression target
+- y_tr_cls_fold: Training fold classification target
+- y_va_cls_fold: Validation fold classification target
+- scaler: StandardScaler instance
+- X_tr_scaled: Scaled training data
+- X_va_scaled: Scaled validation data
+- X_tr_scaled_df: DataFrame of scaled training data
+- X_va_scaled_df: DataFrame of scaled validation data
+- selector: Feature selector instance
+- X_tr_sel: Selected training data
+- X_va_sel: Selected validation data
+- selected_features: List of selected feature names
+- fold_selector_instance: Fitted selector instance
+- X_tr_sel_df: DataFrame of selected training data
+- X_va_sel_df: DataFrame of selected validation data
+- fold_tuned_params_reg: Dictionary of tuned regression parameters
+- fold_tuned_params_cls: Dictionary of tuned classification parameters
+- regressors_to_tune_config: Dictionary of regression models to tune
+
+## Functions:
+- run_outer_cv_loop(
+    X_train_val,
+    y_train_val_reg,
+    y_train_val_cls,
+    kf_outer,
+    feature_names,
+    FEATURE_SELECTION_METHOD,
+    K_BEST_FEATURES,
+    TUNE_ALL_BASE_MODELS,
+    OPTUNA_TRIALS_MAIN,
+    OPTUNA_TRIALS_OTHER,
+    MODEL_REGRESSORS,
+    MODEL_CLASSIFIERS,
+    STACKING_META_REGRESSOR_CANDIDATES,
+    STACKING_META_CLASSIFIER_CANDIDATES,
+    get_compute_device_params,
+    run_optuna_study,
+    select_best_stack,
+    OPTIMIZATION_FUNCTIONS_REG,
+    OPTIMIZATION_FUNCTIONS_CLS
+)
+
+# utils.py (d:\ML\experimental\utils.py)
+## Variables:
+- None (no global variables)
+
+## Functions:
+- get_compute_device_params():
+    Returns:
+        params: Dictionary with keys 'lgbm_device', 'xgb_tree_method', 'xgb_device'
+
+- run_optuna_study(objective, X_tr, y_tr, X_va, y_va, n_trials, direction, study_name, timeout=None):
+    Parameters:
+        objective: Function to optimize
+        X_tr: Training features
+        y_tr: Training targets
+        X_va: Validation features
+        y_va: Validation targets
+        n_trials: Number of trials to run
+        direction: Optimization direction ('minimize' or 'maximize')
+        study_name: Name of the study
+        timeout: Optional timeout in seconds
+    
+    Local Variables:
+        start_time: Timestamp for study start
+        func: Lambda function wrapping the objective
+        base_name: Study name in lowercase with spaces replaced by underscores
+        storage_name: SQLite storage path
+        fallback_name: Fallback study name with UUID
+        fallback_storage: Fallback SQLite storage path
+        study: Optuna study instance
+        completed: Number of completed trials
+        to_run: Number of remaining trials to run
+
+    Returns:
+        study: Completed Optuna study instance
+
+    Study Metadata:
+        creation_timestamp: Timestamp of study creation
+        last_run_timestamp: Timestamp of last run
+        run_count: Number of times the study has been run
+
+# test.py (d:\ML\experimental\test.py)
+## Variables:
+- None (no global variables)
+
+## Functions:
+- None (all functions are imported from other modules)
+
+## Test-Specific Variables:
+- df: DataFrame loaded from DATA_FILE
+- X: Feature DataFrame (all columns except last two)
+- y_reg: Regression target (second to last column)
+- y_cls: Classification target (last column)
+- feature_names: List of feature names
+- X_train_val: Training/Validation features
+- X_test: Test features
+- y_train_val_reg: Training/Validation regression target
+- y_test_reg: Test regression target
+- y_train_val_cls: Training/Validation classification target
+- y_test_cls: Test classification target
+- kf_outer: KFold instance for outer cross-validation
+- MODEL_REGRESSORS_TEST: Dictionary of test regression models (RandomForest, GradientBoosting)
+- STACKING_META_REGRESSOR_CANDIDATES_TEST: Dictionary of test regression meta-models (BayesianRidge)
+- MODEL_CLASSIFIERS_TEST: Empty dictionary (dummy classifiers)
+- STACKING_META_CLASSIFIER_CANDIDATES_TEST: Empty dictionary (dummy classifiers)
+- OPTIMIZATION_FUNCTIONS_REG_TEST: Dictionary of test regression optimization functions (RandomForest, GradientBoosting)
+- OPTIMIZATION_FUNCTIONS_CLS_TEST: Empty dictionary (dummy classification optimization functions)
+- FEATURE_SELECTION_METHOD_TEST: Test feature selection method
+- K_BEST_FEATURES_TEST: Test number of features for SelectKBest
+- TUNE_ALL_BASE_MODELS_TEST: Test flag for tuning base models
+- OPTUNA_TRIALS_MAIN_TEST: Reduced number of trials for main models (5)
+- OPTUNA_TRIALS_OTHER_TEST: Reduced number of trials for other models (3)
