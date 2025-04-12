@@ -1,0 +1,177 @@
+# FLOWCHART: Stacked ML Process in outer_cv.py
+
+## OVERVIEW
+
+The outer_cv.py file implements a nested cross-validation approach for machine learning with stacking ensembles. The primary goal is to:
+1. Tune hyperparameters for base models
+2. Use tuned base models for stacking ensemble creation
+3. Select the best meta-model (stacking model) based on performance
+
+## DETAILED PROCESS FLOW
+
+```
+INPUT → OUTER CV LOOP → [PROCESS EACH FOLD] → OUTPUT RESULTS
+```
+
+### 1. INPUTS
+- Feature data (X_train_val)
+- Regression target (y_train_val_reg)
+- Classification target (y_train_val_cls)
+- Outer cross-validation split iterator (kf_outer)
+- Configuration parameters
+- Helper functions
+
+### 2. OUTER CV LOOP PROCESS (For each fold)
+
+```
+┌────────────────────────────┐
+│ Begin Outer CV Loop        │
+└─────────────┬──────────────┘
+              ▼
+┌────────────────────────────┐
+│ Split Data into Train/Val  │
+└─────────────┬──────────────┘
+              ▼
+┌────────────────────────────┐
+│ Apply Feature Scaling      │
+└─────────────┬──────────────┘
+              ▼
+┌────────────────────────────┐
+│ Perform Feature Selection  │
+└─────────────┬──────────────┘
+              ▼
+┌────────────────────────────┐
+│ Hyperparameter Tuning      │
+│ (Base Models)              │
+└─────────────┬──────────────┘
+              ▼
+┌────────────────────────────┐
+│ Build & Select Best Stack  │
+│ (Meta-Models)              │
+└─────────────┬──────────────┘
+              ▼
+┌────────────────────────────┐
+│ Evaluate on Validation Set │
+└─────────────┬──────────────┘
+              ▼
+┌────────────────────────────┐
+│ Store Results & Models     │
+└────────────────────────────┘
+```
+
+### 3. HYPERPARAMETER TUNING DETAILS
+
+```
+┌───────────────────────────────┐
+│ Begin Hyperparameter Tuning   │
+└───────────────┬───────────────┘
+                ▼
+┌───────────────────────────────┐
+│ Determine Models to Tune      │
+│ Based on Config Settings      │
+└───────────────┬───────────────┘
+                ▼
+┌───────────────────────────────┐
+│ Loop Through Regressors       │
+└───────────────┬───────────────┘
+                ▼
+┌───────────────────────────────┐
+│ For Each Regressor:           │
+│ - Check if Optimization       │
+│   Function Exists             │
+│ - Determine Number of Trials  │
+│ - Set Optimization Direction  │
+└───────────────┬───────────────┘
+                ▼
+┌───────────────────────────────┐
+│ Run Optuna Study for Each     │
+│ Model with Objective Function │
+└───────────────┬───────────────┘
+                ▼
+┌───────────────────────────────┐
+│ Store Best Parameters         │
+└───────────────┬───────────────┘
+                ▼
+┌───────────────────────────────┐
+│ Repeat Process for            │
+│ Classification Models         │
+└───────────────────────────────┘
+```
+
+### 4. STACKING AND META-MODEL SELECTION
+
+```
+┌───────────────────────────────┐
+│ Begin Meta-Model Selection    │
+└───────────────┬───────────────┘
+                ▼
+┌───────────────────────────────┐
+│ Regression Stacking:          │
+│ - Use Base Model Definitions  │
+│ - Apply Tuned Parameters      │
+│ - Try Multiple Meta-Models    │
+└───────────────┬───────────────┘
+                ▼
+┌───────────────────────────────┐
+│ Select Best Regression Stack  │
+│ Based on Validation Metrics   │
+└───────────────┬───────────────┘
+                ▼
+┌───────────────────────────────┐
+│ Classification Stacking:      │
+│ - Use Base Model Definitions  │
+│ - Apply Tuned Parameters      │
+│ - Try Multiple Meta-Models    │
+└───────────────┬───────────────┘
+                ▼
+┌───────────────────────────────┐
+│ Select Best Classification    │
+│ Stack Based on Validation     │
+│ Metrics                       │
+└───────────────┬───────────────┘
+                ▼
+┌───────────────────────────────┐
+│ Return Best Stack Models      │
+└───────────────────────────────┘
+```
+
+## IMPORTANT POINTS
+
+1. **Hyperparameter Tuning:**
+   - Tuning is performed on the base models only
+   - Optuna is used for Bayesian optimization of hyperparameters
+   - Each model has its own objective function for optimization
+   - Tuning runs for a configurable number of trials (OPTUNA_TRIALS_MAIN or OPTUNA_TRIALS_OTHER)
+   - The best parameters are stored for each model and fold
+
+2. **Stacking Process:**
+   - Base models are initialized with their tuned parameters from the previous step
+   - Multiple meta-model candidates are evaluated (from STACKING_META_REGRESSOR_CANDIDATES and STACKING_META_CLASSIFIER_CANDIDATES)
+   - The select_best_stack function tests different meta-models and returns the best stack
+   - Stacking uses cross-validation (STACKING_CV_FOLDS) during training
+
+3. **Key Workflow Distinction:**
+   - Base models use their tuned hyperparameters in each meta-model run
+   - Meta-models (the models that combine base model predictions) are not tuned separately
+   - The best meta-model is selected by trying each candidate and measuring performance
+
+4. **Final Output:**
+   - The process returns performance metrics for each fold
+   - Best hyperparameters for all models across folds
+   - Preprocessing components (scalers, feature selectors)
+   - Trained stacked ensemble models
+
+## IMPLEMENTATION DETAILS
+
+1. **For Each Outer CV Fold:**
+   - Data is split, scaled, and feature selection is applied
+   - Hyperparameters are tuned for base models (if configured)
+   - Tuned base models are used in stacking ensemble
+   - Different meta-models are tested without additional tuning
+   - Best stack is evaluated on validation data
+   - Results are collected for final reporting
+
+2. **In Every Stacking Iteration:**
+   - Base models use their previously tuned parameters
+   - The meta-model combines predictions without additional tuning
+   - Selection is based on validation set performance

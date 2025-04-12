@@ -1,156 +1,152 @@
 # -*- coding: utf-8 -*-
 """
-Test script for outer_cv.py functionality.
-Focuses on testing run_outer_cv_loop with all available models.
+Lightweight Test Script for Stacked ML Pipeline
+
+Demonstrates the complete ML pipeline with minimal computational cost:
+- Data loading and preprocessing
+- Feature selection
+- Hyperparameter tuning of base models
+- Stacking ensemble creation and selection
+- Evaluation and interpretation
+
+Each step prints detailed information about values and decision logic.
 """
 
-# =============================================================================
-# 1. LIBRARY IMPORTS (Reduced for testing)
-# =============================================================================
-import pandas as pd
 import time
-import numpy as np # Added numpy
+import os
+import pandas as pd
+import numpy as np
 from collections import Counter, defaultdict
-
 from sklearn.model_selection import train_test_split, KFold
-from sklearn.preprocessing import StandardScaler # Done inside outer_cv
-from sklearn.metrics import r2_score, mean_absolute_error, accuracy_score, roc_auc_score, mean_squared_error # Done inside outer_cv
-from sklearn.ensemble import StackingRegressor, StackingClassifier, RandomForestRegressor, GradientBoostingRegressor, RandomForestClassifier, GradientBoostingClassifier
-from sklearn.linear_model import Ridge, BayesianRidge #, LogisticRegression
-from sklearn.neural_network import MLPRegressor, MLPClassifier
-from sklearn.svm import SVR, SVC
-from sklearn.neighbors import KNeighborsRegressor, KNeighborsClassifier
-from sklearn.feature_selection import SelectFromModel, SelectKBest, f_regression, mutual_info_regression # Done inside outer_cv
 
-import lightgbm
-import xgboost
-
-
-import config # <<< Added import
-
+# Import from project modules
+from config import (
+    DATA_FILE, TEST_SIZE, RANDOM_STATE, 
+    FEATURE_SELECTION_METHOD, K_BEST_FEATURES, 
+    STRATIFY_SPLIT, OUTPUT_DIR,
+    SAVE_MODELS, SAVE_FEATURES, SAVE_RESULTS
+)
 from utils import run_optuna_study, get_compute_device_params
-
-from config import * # Import necessary configurations
 from model_definitions import (
+    # Model getters
     get_base_regressors, get_base_classifiers,
     get_meta_regressor_candidates, get_meta_classifier_candidates,
-    get_final_model_instance, # Not needed for this test
-    # Import *only* the optimization functions we need
-    optimize_lgbm_reg, optimize_xgb_reg,
-    optimize_rf_reg, optimize_gb_reg, 
-    optimize_bayes_ridge,
-    optimize_lgbm_cls, optimize_xgb_cls, optimize_logistic_regression, optimize_rf_cls, optimize_gb_cls,
-    optimize_mlp_reg,
-    optimize_svr,
-    optimize_knn_reg,
-    optimize_mlp_cls,
-    optimize_svc,
-    optimize_knn_cls
+    select_best_stack,
+    # Optimizer functions - regression
+    optimize_lgbm_reg, optimize_xgb_reg, optimize_rf_reg, optimize_gb_reg,
+    optimize_ridge, optimize_bayes_ridge, optimize_mlp_reg, optimize_svr, optimize_knn_reg,
+    # Optimizer functions - classification
+    optimize_lgbm_cls, optimize_xgb_cls, optimize_logistic_regression, 
+    optimize_rf_cls, optimize_gb_cls, optimize_mlp_cls, optimize_svc, optimize_knn_cls
 )
 from outer_cv import run_outer_cv_loop
-# from pipeline_steps import * # Not needed for this test
-
+from pipeline_steps import (
+    aggregate_cv_results, select_final_model, 
+    evaluate_on_test_set, run_shap_analysis, save_artifacts
+)
 
 # =============================================================================
-# 2. DATA LOADING AND INITIAL SPLIT (Same as main.py)
+# TEST CONFIGURATION - REDUCED FOR SPEED
 # =============================================================================
-print(f"--- 2. Loading Data from {DATA_FILE} ---")
+print("\n========== PEROVSKITES ML PIPELINE TEST ==========\n")
+print("TEST CONFIGURATION - REDUCED FOR SPEED:")
+
+# Reduce computational cost
+TEST_OPTUNA_TRIALS_MAIN = 3   # Reduced from default
+TEST_OPTUNA_TRIALS_OTHER = 2  # Reduced from default
+TEST_N_SPLITS_OUTER_CV = 2    # Reduced from default 5 folds
+TEST_STACKING_CV_FOLDS = 2    # Reduced from default
+
+print(f"  Data Source: {DATA_FILE}")
+print(f"  Test Split: {TEST_SIZE}")
+print(f"  Feature Selection: {FEATURE_SELECTION_METHOD}")
+print(f"  Outer CV Folds: {TEST_N_SPLITS_OUTER_CV} (reduced)")
+print(f"  Stacking CV Folds: {TEST_STACKING_CV_FOLDS} (reduced)")
+print(f"  Optuna Trials: {TEST_OPTUNA_TRIALS_MAIN} (main) / {TEST_OPTUNA_TRIALS_OTHER} (other)")
+print(f"  Random State: {RANDOM_STATE}")
+
+# =============================================================================
+# 1. DATA LOADING AND PREPARATION
+# =============================================================================
+print("\n1. LOADING DATA AND PREPARING SPLITS")
+start_time = time.time()
+
 try:
+    print(f"  Loading data from {DATA_FILE}...")
     df = pd.read_csv(DATA_FILE)
-except FileNotFoundError:
-    print(f"Error: Data file not found at {DATA_FILE}")
-    print("Please ensure the data file exists and the path in config.py is correct.")
-    exit()
+    print(f"  Dataset loaded: {df.shape[0]} samples, {df.shape[1]} columns")
+    
+    # Display data summary
+    print(f"  Feature columns: {df.shape[1]-2}")
+    print(f"  Regression target: {df.columns[-2]}")
+    print(f"  Classification target: {df.columns[-1]}")
+    
+    # Extract features and targets
+    X = df.iloc[:, :-2]
+    y_reg = df.iloc[:, -2]
+    y_cls = df.iloc[:, -1]
+    feature_names = X.columns.tolist()
+    
+    # Print target statistics
+    print(f"  Regression target statistics:")
+    print(f"    Min: {y_reg.min():.4f}, Max: {y_reg.max():.4f}, Mean: {y_reg.mean():.4f}, Std: {y_reg.std():.4f}")
+    print(f"  Classification target distribution:")
+    print(f"    {Counter(y_cls)}")
+    
+    # Create train/test split
+    print("\n  Creating train/test split...")
+    stratify_option = y_cls if STRATIFY_SPLIT and y_cls.nunique() > 1 else None
+    if stratify_option is not None:
+        print(f"    Using stratification for split based on classification target")
+    else:
+        print(f"    Not using stratification for split")
+        
+    X_train_val, X_test, y_train_val_reg, y_test_reg, y_train_val_cls, y_test_cls = train_test_split(
+        X, y_reg, y_cls, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=stratify_option
+    )
+    
+    print(f"    Training/validation set: {X_train_val.shape[0]} samples")
+    print(f"    Test set: {X_test.shape[0]} samples")
+    
+    # Set up cross-validation
+    print("\n  Setting up cross-validation...")
+    kf_outer = KFold(n_splits=TEST_N_SPLITS_OUTER_CV, shuffle=True, random_state=RANDOM_STATE)
+    print(f"    Created {TEST_N_SPLITS_OUTER_CV}-fold cross-validation for outer loop")
 
-
-# Assuming last two columns are targets (regression then classification)
-if df.shape[1] < 3:
-    print("Error: Data file requires at least 3 columns (features + regression target + classification target).")
-    exit()
-
-X = df.iloc[:, :-2]
-y_reg = df.iloc[:, -2]
-y_cls = df.iloc[:, -1] # Keep for stratify split, but won't be used in CV loop test
-feature_names = X.columns.tolist()
-
-# --- Hold-out Test Set (Keep split logic, but test set won't be used here) ---
-X_train_val, X_test, y_train_val_reg, y_test_reg, y_train_val_cls, y_test_cls = train_test_split(
-    X, y_reg, y_cls, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y_cls if STRATIFY_SPLIT and y_cls.nunique() > 1 else None
-)
-
-print(f"Using Train/Val data = {X_train_val.shape[0]} samples for Outer CV test")
-# print(f"Test data = {X_test.shape[0]} samples (not used in this test)") # Commented out
-
+except Exception as e:
+    print(f"ERROR: Failed to load data or prepare splits: {e}")
+    raise
 
 # =============================================================================
-# 3. OUTER CROSS-VALIDATION SETUP (Same as main.py)
+# 2. PREPARE MODELS AND OPTIMIZATION FUNCTIONS
 # =============================================================================
-print(f"\n--- 3. Setting up Outer {N_SPLITS_OUTER_CV}-Fold Cross-Validation ---")
-kf_outer = KFold(n_splits=N_SPLITS_OUTER_CV, shuffle=True, random_state=RANDOM_STATE)
+print("\n2. PREPARING MODELS AND OPTIMIZATION FUNCTIONS")
 
-# =============================================================================
-# 4. PREPARE INPUTS FOR run_outer_cv_loop (All Models)
-# =============================================================================
-print(f"\n--- 4. Preparing Inputs for Outer CV Loop Test ---")
+# Get base models
+print("  Initializing base regression models...")
+MODEL_REGRESSORS = get_base_regressors(RANDOM_STATE)
+for name in MODEL_REGRESSORS.keys():
+    print(f"    ✓ {name}")
 
-# === Test-Specific Model/Optimization Definitions ===
-# Import necessary functions and classes
-from model_definitions import (
-    get_base_regressors,
-    get_meta_regressor_candidates,
-    get_base_classifiers, 
-    get_meta_classifier_candidates, 
-    # Regression Optimizers
-    optimize_lgbm_reg, 
-    optimize_xgb_reg,  
-    optimize_rf_reg,
-    optimize_gb_reg,
-    optimize_ridge, 
-    optimize_bayes_ridge,
-    optimize_mlp_reg,
-    optimize_svr,
-    optimize_knn_reg,
-    # Classification Optimizers 
-    optimize_lgbm_cls, optimize_xgb_cls, optimize_logistic_regression, optimize_rf_cls, optimize_gb_cls,
-    optimize_mlp_cls,
-    optimize_svc,
-    optimize_knn_cls
-)
+print("  Initializing base classification models...")
+MODEL_CLASSIFIERS = get_base_classifiers(RANDOM_STATE)
+for name in MODEL_CLASSIFIERS.keys():
+    print(f"    ✓ {name}")
 
-# Define the set of models for THIS test run
-MODEL_REGRESSORS_TEST = {
-    'LGBM': get_base_regressors(RANDOM_STATE)['LGBM'],
-    'XGB': get_base_regressors(RANDOM_STATE)['XGB'],
-    'Ridge': get_base_regressors(RANDOM_STATE)['Ridge'],
-    'RandomForest': get_base_regressors(RANDOM_STATE)['RandomForest'],
-    'GradientBoosting': get_base_regressors(RANDOM_STATE)['GradientBoosting'],
-    'BayesianRidge': get_base_regressors(RANDOM_STATE)['BayesianRidge'],
-    'MLP': get_base_regressors(RANDOM_STATE)['MLP'],
-    'SVR': get_base_regressors(RANDOM_STATE)['SVR'],
-    'KNN': get_base_regressors(RANDOM_STATE)['KNN']
-}
+# Get meta-model candidates
+print("  Initializing meta-regressor candidates...")
+STACKING_META_REGRESSOR_CANDIDATES = get_meta_regressor_candidates(RANDOM_STATE)
+for name in STACKING_META_REGRESSOR_CANDIDATES.keys():
+    print(f"    ✓ {name}")
 
-STACKING_META_REGRESSOR_CANDIDATES_TEST = {
-    'XGB': get_meta_regressor_candidates(RANDOM_STATE)['XGB'],
-    'Ridge': get_meta_regressor_candidates(RANDOM_STATE)['Ridge'],
-    'BayesianRidge': get_meta_regressor_candidates(RANDOM_STATE)['BayesianRidge'],
-    'RandomForest': get_meta_regressor_candidates(RANDOM_STATE)['RandomForest'],
-    'LGBM': get_meta_regressor_candidates(RANDOM_STATE)['LGBM']
-}
+print("  Initializing meta-classifier candidates...")
+STACKING_META_CLASSIFIER_CANDIDATES = get_meta_classifier_candidates(RANDOM_STATE)
+for name in STACKING_META_CLASSIFIER_CANDIDATES.keys():
+    print(f"    ✓ {name}")
 
-MODEL_CLASSIFIERS_TEST = get_base_classifiers(RANDOM_STATE)
-
-STACKING_META_CLASSIFIER_CANDIDATES_TEST = {
-    'LogisticRegression': get_meta_classifier_candidates(RANDOM_STATE)['LogisticRegression'],
-    'RandomForest': get_meta_classifier_candidates(RANDOM_STATE)['RandomForest'],
-    'LGBM': get_meta_classifier_candidates(RANDOM_STATE)['LGBM'],
-    'XGB': get_meta_classifier_candidates(RANDOM_STATE)['XGB'],
-    'SVC': get_meta_classifier_candidates(RANDOM_STATE)['SVC'],
-    'KNN': get_meta_classifier_candidates(RANDOM_STATE)['KNN']
-}
-
-# Define Optimization functions for the selected test models
-OPTIMIZATION_FUNCTIONS_REG_TEST = {
+# Set up optimization functions
+print("  Setting up optimization functions...")
+OPTIMIZATION_FUNCTIONS_REG = {
     'LGBM': optimize_lgbm_reg,
     'XGB': optimize_xgb_reg,
     'RandomForest': optimize_rf_reg,
@@ -162,7 +158,7 @@ OPTIMIZATION_FUNCTIONS_REG_TEST = {
     'KNN': optimize_knn_reg
 }
 
-OPTIMIZATION_FUNCTIONS_CLS_TEST = {
+OPTIMIZATION_FUNCTIONS_CLS = {
     'LGBM': optimize_lgbm_cls,
     'XGB': optimize_xgb_cls,
     'LogisticRegression': optimize_logistic_regression,
@@ -172,115 +168,218 @@ OPTIMIZATION_FUNCTIONS_CLS_TEST = {
     'SVC': optimize_svc,
     'KNN': optimize_knn_cls
 }
-
-# --- Other Parameters ---
-# Use parameters from config.py where possible
-FEATURE_SELECTION_METHOD_TEST = FEATURE_SELECTION_METHOD # Or set to 'none' to speed up test
-K_BEST_FEATURES_TEST = K_BEST_FEATURES
-TUNE_ALL_BASE_MODELS_TEST = TUNE_ALL_BASE_MODELS # Keep True to test tuning
-OPTUNA_TRIALS_MAIN_TEST = 5 # REDUCED trials for faster testing
-OPTUNA_TRIALS_OTHER_TEST = 3 # REDUCED trials for faster testing
-
-print(f"  Feature Selection: {FEATURE_SELECTION_METHOD_TEST}")
-print(f"  Tune Base Models: {TUNE_ALL_BASE_MODELS_TEST}")
-print(f"  Optuna Trials (Main/Other): {OPTUNA_TRIALS_MAIN_TEST} / {OPTUNA_TRIALS_OTHER_TEST}")
-
+print(f"    ✓ {len(OPTIMIZATION_FUNCTIONS_REG)} regression optimizers")
+print(f"    ✓ {len(OPTIMIZATION_FUNCTIONS_CLS)} classification optimizers")
 
 # =============================================================================
-# 5. RUN OUTER CROSS-VALIDATION LOOP (Test Call)
+# 3. RUN OUTER CROSS-VALIDATION LOOP
 # =============================================================================
-print(f"\n--- 5. Running Outer CV Loop Test ---")
-start_time_test = time.time()
+print("\n3. RUNNING OUTER CROSS-VALIDATION LOOP")
+start_outer_cv = time.time()
 
-# Call the outer loop function with the test setup
 try:
-    (
-        outer_fold_results_reg,
-        outer_fold_results_cls, 
-        fold_selected_features_list,
-        fold_best_params_reg,
-        fold_best_params_cls, 
-        fold_scalers,
-        fold_selectors,
-        all_fold_models_reg,
-        all_fold_models_cls 
-    ) = run_outer_cv_loop(
+    # Execute the main cross-validation loop
+    outer_fold_results_reg, outer_fold_results_cls, fold_selected_features_list, \
+    fold_best_params_reg, fold_best_params_cls, fold_scalers, fold_selectors, \
+    all_fold_models_reg, all_fold_models_cls = run_outer_cv_loop(
         X_train_val=X_train_val,
         y_train_val_reg=y_train_val_reg,
-        y_train_val_cls=y_train_val_cls, 
+        y_train_val_cls=y_train_val_cls,
         kf_outer=kf_outer,
         feature_names=feature_names,
-        FEATURE_SELECTION_METHOD=FEATURE_SELECTION_METHOD_TEST,
-        K_BEST_FEATURES=K_BEST_FEATURES_TEST,
-        TUNE_ALL_BASE_MODELS=TUNE_ALL_BASE_MODELS_TEST,
-        OPTUNA_TRIALS_MAIN=OPTUNA_TRIALS_MAIN_TEST, 
-        OPTUNA_TRIALS_OTHER=OPTUNA_TRIALS_OTHER_TEST, 
-        MODEL_REGRESSORS=MODEL_REGRESSORS_TEST, 
-        MODEL_CLASSIFIERS=MODEL_CLASSIFIERS_TEST, 
-        STACKING_META_REGRESSOR_CANDIDATES=STACKING_META_REGRESSOR_CANDIDATES_TEST, 
-        STACKING_META_CLASSIFIER_CANDIDATES=STACKING_META_CLASSIFIER_CANDIDATES_TEST, 
-        STACKING_CV_FOLDS=config.STACKING_CV_FOLDS,
+        FEATURE_SELECTION_METHOD=FEATURE_SELECTION_METHOD,
+        K_BEST_FEATURES=K_BEST_FEATURES,
+        TUNE_ALL_BASE_MODELS=True,  # Test all hyperparameter tuning
+        OPTUNA_TRIALS_MAIN=TEST_OPTUNA_TRIALS_MAIN,
+        OPTUNA_TRIALS_OTHER=TEST_OPTUNA_TRIALS_OTHER,
+        MODEL_REGRESSORS=MODEL_REGRESSORS,
+        MODEL_CLASSIFIERS=MODEL_CLASSIFIERS,
+        STACKING_META_REGRESSOR_CANDIDATES=STACKING_META_REGRESSOR_CANDIDATES,
+        STACKING_META_CLASSIFIER_CANDIDATES=STACKING_META_CLASSIFIER_CANDIDATES,
+        STACKING_CV_FOLDS=TEST_STACKING_CV_FOLDS,
         get_compute_device_params=get_compute_device_params,
         run_optuna_study=run_optuna_study,
         select_best_stack=select_best_stack,
-        OPTIMIZATION_FUNCTIONS_REG=OPTIMIZATION_FUNCTIONS_REG_TEST, 
-        OPTIMIZATION_FUNCTIONS_CLS=OPTIMIZATION_FUNCTIONS_CLS_TEST 
+        OPTIMIZATION_FUNCTIONS_REG=OPTIMIZATION_FUNCTIONS_REG,
+        OPTIMIZATION_FUNCTIONS_CLS=OPTIMIZATION_FUNCTIONS_CLS
     )
-
-    end_time_test = time.time()
-    print(f"\n--- Outer CV Loop Test Completed in {end_time_test - start_time_test:.2f} seconds ---")
-
-    # =============================================================================
-    # 6. DISPLAY RESULTS (Simplified)
-    # =============================================================================
-    print("\n--- 6. Test Results ---")
-
-    # Regression Results
-    print("\nRegression Fold Results:")
-    if outer_fold_results_reg:
-        for metric, values in outer_fold_results_reg.items():
-            print(f"  {metric}: {values}")
-        # Calculate and print means/stds if desired
-        mean_r2 = np.mean(outer_fold_results_reg.get('R2', [np.nan]))
-        std_r2 = np.std(outer_fold_results_reg.get('R2', [np.nan]))
-        mean_mae = np.mean(outer_fold_results_reg.get('MAE', [np.nan]))
-        std_mae = np.std(outer_fold_results_reg.get('MAE', [np.nan]))
-        print(f"\n  Aggregated Regression:")
-        print(f"    Mean R2: {mean_r2:.4f} +/- {std_r2:.4f}")
-        print(f"    Mean MAE: {mean_mae:.4f} +/- {std_mae:.4f}")
-    else:
-        print("  No regression results collected.")
-
-    print("\nFold Selected Features (First 10):")
-    for i, features in enumerate(fold_selected_features_list):
-        print(f"  Fold {i+1}: {features[:10]}...")
-
-    print("\nFold Best Regressor Params (Example):")
-    if fold_best_params_reg:
-        for model_name, folds_params in fold_best_params_reg.items():
-             print(f"  {model_name}:")
-             for fold_idx, params in folds_params.items():
-                 # Print only the first fold's params for brevity
-                 if fold_idx == 0:
-                     print(f"    Fold 1 Best Params: {params}")
-                 break # Only show first fold
-
-    print("\nStored Scalers count:", len(fold_scalers))
-    print("Stored Selectors count:", len(fold_selectors))
-    print("Stored Regressor Models count:", len(all_fold_models_reg))
-
-    # Classification results are expected to be empty/NaN
-    # print("\nClassification Fold Results:")
-    # if outer_fold_results_cls:
-    #     for metric, values in outer_fold_results_cls.items():
-    #         print(f"  {metric}: {values}")
-    # else:
-    #      print("  No classification results collected (as expected).")
+    
+    outer_cv_time = time.time() - start_outer_cv
+    print(f"\nOuter CV completed in {outer_cv_time:.2f} seconds")
 
 except Exception as e:
-    print(f"\n--- ERROR during Outer CV Loop Test ---")
-    print(f"An error occurred: {e}")
+    print(f"ERROR: Failed during outer CV: {e}")
+    import traceback
+    traceback.print_exc()
+    raise
+
+# =============================================================================
+# 4. AGGREGATE CROSS-VALIDATION RESULTS
+# =============================================================================
+print("\n4. AGGREGATING CROSS-VALIDATION RESULTS")
+
+try:
+    # Get aggregate metrics across folds
+    mean_r2, std_r2, mean_mae, std_mae, mean_acc, std_acc, mean_roc_auc, std_roc_auc = aggregate_cv_results(
+        outer_fold_results_reg, outer_fold_results_cls
+    )
+    
+    # Print detailed feature selection results
+    print("\n  Feature Selection Results:")
+    for i, features in enumerate(fold_selected_features_list):
+        print(f"    Fold {i+1}: Selected {len(features)} features")
+        print(f"      Top 5 features: {features[:5]}")
+    
+    # Print hyperparameter tuning results (sample)
+    print("\n  Hyperparameter Tuning Results (Sample):")  
+    for model_name, folds_params in fold_best_params_reg.items():
+        print(f"    {model_name}:")
+        # Show first fold only as example
+        if 0 in folds_params:
+            print(f"      Fold 1 Best Params: {folds_params[0]}")
+        else:
+            print("      No parameters found for Fold 1")
+
+except Exception as e:
+    print(f"ERROR: Failed to aggregate results: {e}")
     import traceback
     traceback.print_exc()
 
-print("\n--- Test Script Finished ---")
+# =============================================================================
+# 5. SELECT FINAL MODELS
+# =============================================================================
+print("\n5. SELECTING FINAL MODELS BASED ON BEST FOLD PERFORMANCE")
+
+try:
+    # Select best models from cross-validation
+    final_regressor, final_classifier, final_scaler, final_selector, \
+    selected_features_final, best_fold_idx_reg, best_fold_idx_cls = select_final_model(
+        outer_fold_results_reg, 
+        outer_fold_results_cls,
+        all_fold_models_reg,
+        all_fold_models_cls,
+        fold_scalers,
+        fold_selectors,
+        fold_selected_features_list,
+        TEST_N_SPLITS_OUTER_CV
+    )
+    
+    # Print detailed information about selected models
+    if final_regressor:
+        print(f"\n  Selected final regressor from fold {best_fold_idx_reg + 1}:")
+        print(f"    Model type: {type(final_regressor).__name__}")
+        print(f"    R2 score: {outer_fold_results_reg['R2'][best_fold_idx_reg]:.4f}")
+        print(f"    MAE: {outer_fold_results_reg['MAE'][best_fold_idx_reg]:.4f}")
+    
+    if final_classifier:
+        print(f"\n  Selected final classifier from fold {best_fold_idx_cls + 1}:")
+        print(f"    Model type: {type(final_classifier).__name__}")
+        print(f"    Accuracy: {outer_fold_results_cls['Accuracy'][best_fold_idx_cls]:.4f}")
+        print(f"    ROC-AUC: {outer_fold_results_cls['ROC-AUC'][best_fold_idx_cls]:.4f}")
+    
+    if selected_features_final:
+        print(f"\n  Selected {len(selected_features_final)} features for final models:")
+        print(f"    Top 10: {selected_features_final[:10]}")
+
+except Exception as e:
+    print(f"ERROR: Failed to select final models: {e}")
+    import traceback
+    traceback.print_exc()
+
+# =============================================================================
+# 6. EVALUATE ON TEST SET
+# =============================================================================
+print("\n6. EVALUATING ON TEST SET")
+
+try:
+    # Apply preprocessing and evaluate on test set
+    X_test_scaled_df, X_test_sel_df = evaluate_on_test_set(
+        X_test, y_test_reg, y_test_cls,
+        final_regressor, final_classifier,
+        final_scaler, final_selector,
+        selected_features_final,
+        feature_names
+    )
+    
+    print("\n  Test set evaluation complete")
+    if X_test_sel_df is not None:
+        print(f"    Processed test data shape: {X_test_sel_df.shape}")
+
+except Exception as e:
+    print(f"ERROR: Failed to evaluate on test set: {e}")
+    import traceback
+    traceback.print_exc()
+    X_test_scaled_df, X_test_sel_df = None, None
+
+# =============================================================================
+# 7. SHAP ANALYSIS
+# =============================================================================
+print("\n7. RUNNING SHAP ANALYSIS")
+
+try:
+    if X_test_sel_df is not None and final_regressor is not None:
+        run_shap_analysis(
+            final_regressor, final_classifier,
+            X_test_sel_df,
+            selected_features_final,
+            X_train_val,
+            y_train_val_reg,
+            kf_outer,
+            best_fold_idx_reg,
+            final_scaler,
+            final_selector,
+            FEATURE_SELECTION_METHOD
+        )
+    else:
+        print("  SHAP analysis skipped: missing test data or final models")
+
+except Exception as e:
+    print(f"ERROR: Failed to run SHAP analysis: {e}")
+    import traceback
+    traceback.print_exc()
+
+# =============================================================================
+# 8. SAVE RESULTS
+# =============================================================================
+print("\n8. SAVING RESULTS")
+
+try:
+    # Create output directory
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    print(f"  Using output directory: {OUTPUT_DIR}")
+    
+    # Save models and results
+    save_artifacts(
+        final_regressor, final_classifier,
+        selected_features_final,
+        outer_fold_results_reg, outer_fold_results_cls,
+        output_dir=OUTPUT_DIR,
+        save_models=SAVE_MODELS,
+        save_features=SAVE_FEATURES,
+        save_results=SAVE_RESULTS
+    )
+
+except Exception as e:
+    print(f"ERROR: Failed to save results: {e}")
+    import traceback
+    traceback.print_exc()
+
+# =============================================================================
+# SUMMARY
+# =============================================================================
+total_time = time.time() - start_time
+print("\n========== TEST EXECUTION SUMMARY ==========")
+print(f"Total execution time: {total_time:.2f} seconds")
+print(f"Cross-validation: {outer_cv_time:.2f} seconds ({outer_cv_time/total_time*100:.1f}% of total)")
+
+print("\nKey Results:")
+if 'mean_r2' in locals() and not np.isnan(mean_r2):
+    print(f"  Mean R2: {mean_r2:.4f} +/- {std_r2:.4f}")
+if 'mean_mae' in locals() and not np.isnan(mean_mae):
+    print(f"  Mean MAE: {mean_mae:.4f} +/- {std_mae:.4f}")
+if 'mean_acc' in locals() and not np.isnan(mean_acc):
+    print(f"  Mean Accuracy: {mean_acc:.4f} +/- {std_acc:.4f}")
+if 'mean_roc_auc' in locals() and not np.isnan(mean_roc_auc):
+    print(f"  Mean ROC-AUC: {mean_roc_auc:.4f} +/- {std_roc_auc:.4f}")
+
+print("\nTest completed successfully!")

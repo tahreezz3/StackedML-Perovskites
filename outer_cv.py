@@ -23,7 +23,7 @@ from config import (
 # Import necessary functions/definitions (alternative: pass them as arguments)
 # from model_definitions import get_final_model_instance # Might not be needed inside loop
 # from utils import run_optuna_study # Assume passed as arg
-# from model_tuning import select_best_stack # Assume passed as arg
+# from model_definitions import select_best_stack # Passed as arg
 
 # Import model classes (if not dynamically created via get_final_model_instance)
 from sklearn.linear_model import BayesianRidge, LogisticRegression

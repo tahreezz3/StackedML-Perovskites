@@ -1,29 +1,30 @@
 import numpy as np
 import lightgbm as lgb
 import xgboost as xgb
+import shap
 from optuna.exceptions import TrialPruned
 from functools import partial
-from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier, GradientBoostingRegressor, GradientBoostingClassifier
-from sklearn.linear_model import Ridge, BayesianRidge, LogisticRegression
-from sklearn.neural_network import MLPRegressor, MLPClassifier
-from sklearn.svm import SVR, SVC
-from sklearn.neighbors import KNeighborsRegressor, KNeighborsClassifier
-from sklearn.metrics import r2_score, mean_squared_error, roc_auc_score, mean_absolute_error
-
-from sklearn.metrics import r2_score, mean_absolute_error, accuracy_score, roc_auc_score, mean_squared_error
-from sklearn.ensemble import StackingRegressor, StackingClassifier, RandomForestRegressor, GradientBoostingRegressor, RandomForestClassifier, GradientBoostingClassifier
-from sklearn.linear_model import Ridge, BayesianRidge, LogisticRegression
-from sklearn.neural_network import MLPRegressor, MLPClassifier
-from sklearn.svm import SVR, SVC
-from sklearn.neighbors import KNeighborsRegressor, KNeighborsClassifier
-
-import lightgbm
-import xgboost
-import shap
 from utils import get_compute_device_params
-RANDOM_STATE = 42   
-# Get compute parameters once
 
+# scikit-learn imports
+from sklearn.ensemble import (
+    RandomForestRegressor, RandomForestClassifier, 
+    GradientBoostingRegressor, GradientBoostingClassifier,
+    StackingRegressor, StackingClassifier
+)
+from sklearn.linear_model import Ridge, BayesianRidge, LogisticRegression
+from sklearn.neural_network import MLPRegressor, MLPClassifier
+from sklearn.svm import SVR, SVC
+from sklearn.neighbors import KNeighborsRegressor, KNeighborsClassifier
+from sklearn.metrics import (
+    r2_score, mean_squared_error, mean_absolute_error,
+    accuracy_score, roc_auc_score
+)
+
+# Constants
+RANDOM_STATE = 42   
+
+# Get compute parameters once
 COMPUTE_PARAMS = get_compute_device_params()
 
 # =============================================================================
@@ -561,7 +562,7 @@ def get_meta_classifier_candidates(random_state=42):
         'XGB': xgb.XGBClassifier(random_state=random_state, verbosity=0),
     }
 
-
+# select_best_stack is defined in this file and passed as an arg to outer_cv.py
 def select_best_stack(base_model_definitions, tuned_base_params, meta_candidates,
                       X_tr, y_tr, X_va, y_va, task='regression', cv_folds=5,
                       random_state=42, compute_params=None):

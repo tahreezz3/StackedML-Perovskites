@@ -14,9 +14,16 @@ import time
 from sklearn.metrics import r2_score, mean_absolute_error, accuracy_score, roc_auc_score, mean_squared_error
 from sklearn.feature_selection import SelectKBest, mutual_info_regression # For recreating selector if needed
 
-# Import necessary config or utility functions if needed, or pass them
-# from config import ...
-# from utils import ...
+# Import necessary config variables
+from config import (
+    SAVE_MODELS,
+    SAVE_FEATURES,
+    SAVE_RESULTS,
+    SHAP_BACKGROUND_SAMPLES,
+    SHAP_EXPLAIN_SAMPLES,
+    OUTPUT_DIR
+)
+# Utility imports could also be added here if needed
 
 
 def aggregate_cv_results(outer_fold_results_reg, outer_fold_results_cls):
@@ -315,7 +322,7 @@ def run_shap_analysis(
         X_tr_final_fold = X_train_val.iloc[train_indices]
 
         # Take a subset for performance
-        background_sample_size = min(100, X_tr_final_fold.shape[0])
+        background_sample_size = min(SHAP_BACKGROUND_SAMPLES, X_tr_final_fold.shape[0])
         background_data_idx = np.random.choice(X_tr_final_fold.index, size=background_sample_size, replace=False)
         X_tr_fold_sample = X_tr_final_fold.loc[background_data_idx]
 
@@ -342,7 +349,7 @@ def run_shap_analysis(
         return
 
     # Select a sample of the test data for SHAP calculation (for performance)
-    test_sample_size = min(200, X_test_sel_df.shape[0])
+    test_sample_size = min(SHAP_EXPLAIN_SAMPLES, X_test_sel_df.shape[0])
     test_sample_idx = np.random.choice(X_test_sel_df.index, size=test_sample_size, replace=False)
     X_test_sel_sample_df = X_test_sel_df.loc[test_sample_idx]
     print(f"  Calculating SHAP values for {test_sample_size} test samples.")
@@ -409,7 +416,7 @@ def save_artifacts(
     final_regressor, final_classifier,
     selected_features_final,
     outer_fold_results_reg, outer_fold_results_cls,
-    output_dir="output", # Allow specifying output directory
+    output_dir=OUTPUT_DIR, # Use config variable as default
     save_models=SAVE_MODELS,
     save_features=SAVE_FEATURES,
     save_results=SAVE_RESULTS
