@@ -80,7 +80,7 @@ The selection includes a variety of algorithms (tree-based, linear, neural netwo
 
 ### Meta-Models
 
-The meta-learners combine base model predictions and are selected based on performance:
+The meta-learners combine base model predictions and selects the best meta-model based on performance:
 
 #### For Regression
 - Ridge Regression
@@ -188,4 +188,4 @@ Contributions are welcome! Please fork the repository and submit a pull request.
 
 ## License 📝
 
-This project is licensed under the MIT License.
+This project is currently in progress.
