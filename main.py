@@ -110,7 +110,7 @@ OPTIMIZATION_FUNCTIONS_REG = {
     'RandomForest': optimize_rf_reg,
     'GradientBoosting': optimize_gb_reg,
     'BayesianRidge': optimize_bayes_ridge,
-    # Add others if defined in model_tuning.py
+    # Add others if defined in needed
     #'MLP': optimize_mlp_reg,
     #'SVR': optimize_svr,
     #'KNN': optimize_knn_reg,
@@ -121,7 +121,7 @@ OPTIMIZATION_FUNCTIONS_CLS = {
     'LogisticRegression': optimize_logistic_regression, # Corrected function name
     'RandomForest': optimize_rf_cls,
     'GradientBoosting': optimize_gb_cls,
-    # Add others if defined in model_tuning.py
+    # Add others if defined in needed
     #'MLP': optimize_mlp_cls,
     #'SVC': optimize_svc,
     #'KNN': optimize_knn_cls,

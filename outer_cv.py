@@ -365,6 +365,5 @@ def run_outer_cv_loop(
     )
 
 
-# --- (Optional) Helper functions previously in utils or model_tuning could be moved here ---
+# --- (Optional) Helper functions previously in utils could be moved here ---
 # For example, if select_best_stack was not complex, it could live here.
-# However, keeping utils.py and model_tuning.py separate is often better for organization.
