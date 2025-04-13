@@ -108,8 +108,14 @@ def optimize_xgb_reg(trial, X_tr, y_tr, X_va, y_va):
 
     model = xgb.XGBRegressor(**xgb_params)
     try:
-        # Simplest fit call for diagnostics - no early stopping/pruning here
-        model.fit(X_tr, y_tr)
+        # Add early stopping to prevent overfitting and reduce computation time
+        model.fit(
+            X_tr, y_tr, 
+            eval_set=[(X_va, y_va)],
+            eval_metric='rmse',
+            early_stopping_rounds=50,
+            verbose=False
+        )
         preds = model.predict(X_va)
         mse = mean_squared_error(y_va, preds)
         score = np.sqrt(mse)
@@ -138,24 +144,6 @@ def optimize_rf_reg(trial, X_tr, y_tr, X_va, y_va):
         print(f"Trial failed for RF Reg: {e}")
         raise TrialPruned()
 
-def optimize_gb_reg(trial, X_tr, y_tr, X_va, y_va):
-    n_estimators = trial.suggest_int('n_estimators', 50, 300)
-    learning_rate = trial.suggest_float('learning_rate', 0.01, 0.3, log=True)
-    max_depth = trial.suggest_int('max_depth', 3, 10)
-    subsample = trial.suggest_float('subsample', 0.6, 1.0)
-    model = GradientBoostingRegressor(n_estimators=n_estimators, learning_rate=learning_rate,
-                                      max_depth=max_depth, subsample=subsample,
-                                      random_state=RANDOM_STATE)
-    try:
-        model.fit(X_tr, y_tr)
-        preds = model.predict(X_va)
-        score = r2_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("R2 score is NaN")
-        return score
-    except Exception as e:
-        print(f"Trial failed for GB Reg: {e}")
-        raise TrialPruned()
-
 def optimize_ridge(trial, X_tr, y_tr, X_va, y_va):
     alpha = trial.suggest_float('alpha', 1e-4, 1e2, log=True)
     model = Ridge(alpha=alpha, random_state=RANDOM_STATE)
@@ -167,22 +155,6 @@ def optimize_ridge(trial, X_tr, y_tr, X_va, y_va):
         return score
     except Exception as e:
         print(f"Trial failed for Ridge: {e}")
-        raise TrialPruned()
-
-def optimize_bayes_ridge(trial, X_tr, y_tr, X_va, y_va):
-    alpha_1 = trial.suggest_float('alpha_1', 1e-7, 1e-5, log=True)
-    alpha_2 = trial.suggest_float('alpha_2', 1e-7, 1e-5, log=True)
-    lambda_1 = trial.suggest_float('lambda_1', 1e-7, 1e-5, log=True)
-    lambda_2 = trial.suggest_float('lambda_2', 1e-7, 1e-5, log=True)
-    model = BayesianRidge(alpha_1=alpha_1, alpha_2=alpha_2, lambda_1=lambda_1, lambda_2=lambda_2)
-    try:
-        model.fit(X_tr, y_tr)
-        preds = model.predict(X_va)
-        score = r2_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("R2 score is NaN")
-        return score
-    except Exception as e:
-        print(f"Trial failed for BayesRidge: {e}")
         raise TrialPruned()
 
 def optimize_mlp_reg(trial, X_tr, y_tr, X_va, y_va):
@@ -202,31 +174,6 @@ def optimize_mlp_reg(trial, X_tr, y_tr, X_va, y_va):
         return score
     except Exception as e:
         print(f"Trial failed for MLP Reg: {e}")
-        raise TrialPruned()
-
-def optimize_svr(trial, X_tr, y_tr, X_va, y_va):
-    kernel = trial.suggest_categorical('kernel', ['linear', 'rbf', 'poly'])
-    params = {
-        'C': trial.suggest_float('C', 1e-2, 1e3, log=True),
-        'kernel': kernel,
-        'gamma': trial.suggest_float('gamma', 1e-4, 1e0, log=True),
-        'epsilon': trial.suggest_float('epsilon', 1e-2, 1e0, log=True),
-        'degree': trial.suggest_int('degree', 2, 5) if kernel == 'poly' else 3,
-    }
-    if params['kernel'] == 'linear':
-        params['gamma'] = 'scale'
-    if params['kernel'] != 'poly':
-        del params['degree']
-
-    model = SVR(**params)
-    try:
-        model.fit(X_tr, y_tr)
-        preds = model.predict(X_va)
-        score = r2_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("R2 score is NaN")
-        return score
-    except Exception as e:
-        print(f"Trial failed for SVR: {e}")
         raise TrialPruned()
 
 def optimize_knn_reg(trial, X_tr, y_tr, X_va, y_va):
@@ -327,25 +274,6 @@ def optimize_rf_cls(trial, X_tr, y_tr, X_va, y_va):
         print(f"Trial failed for RF Cls: {e}")
         raise TrialPruned()
 
-def optimize_gb_cls(trial, X_tr, y_tr, X_va, y_va):
-    params = {
-        'n_estimators': trial.suggest_int('n_estimators', 50, 300),
-        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-        'max_depth': trial.suggest_int('max_depth', 3, 10),
-        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
-        'random_state': RANDOM_STATE
-    }
-    model = GradientBoostingClassifier(**params)
-    try:
-        model.fit(X_tr, y_tr)
-        preds = model.predict_proba(X_va)[:, 1]
-        score = roc_auc_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("ROC-AUC score is NaN")
-        return score
-    except Exception as e:
-        print(f"Trial failed for GB Cls: {e}")
-        raise TrialPruned()
-
 def optimize_logistic_regression(trial, X_tr, y_tr, X_va, y_va):
     C = trial.suggest_float('C', 1e-4, 1e2, log=True)
     solver = trial.suggest_categorical('solver', ['liblinear', 'saga'])
@@ -427,23 +355,6 @@ def optimize_svc(trial, X_tr, y_tr, X_va, y_va):
         return score
     except Exception as e:
         print(f"Trial failed for SVC: {e}")
-        raise TrialPruned()
-
-def optimize_knn_cls(trial, X_tr, y_tr, X_va, y_va):
-    params = {
-        'n_neighbors': trial.suggest_int('n_neighbors', 3, 30),
-        'weights': trial.suggest_categorical('weights', ['uniform', 'distance']),
-        'p': trial.suggest_int('p', 1, 2)
-    }
-    model = KNeighborsClassifier(**params, n_jobs=-1)
-    try:
-        model.fit(X_tr, y_tr)
-        preds = model.predict_proba(X_va)[:, 1]
-        score = roc_auc_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("ROC-AUC score is NaN")
-        return score
-    except Exception as e:
-        print(f"Trial failed for KNN Cls: {e}")
         raise TrialPruned()
 
 # --- Helper Function for Model Instantiation ---
