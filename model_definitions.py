@@ -5,17 +5,18 @@ import shap
 from optuna.exceptions import TrialPruned
 from functools import partial
 from utils import get_compute_device_params
+from typing import Dict, Any, Tuple, Optional, Union
+from sklearn.base import BaseEstimator
 
 # scikit-learn imports
 from sklearn.ensemble import (
-    RandomForestRegressor, RandomForestClassifier, 
-    GradientBoostingRegressor, GradientBoostingClassifier,
+    RandomForestRegressor, RandomForestClassifier,
     StackingRegressor, StackingClassifier
 )
-from sklearn.linear_model import Ridge, BayesianRidge, LogisticRegression
+from sklearn.linear_model import Ridge, LogisticRegression, BayesianRidge
 from sklearn.neural_network import MLPRegressor, MLPClassifier
-from sklearn.svm import SVR, SVC
-from sklearn.neighbors import KNeighborsRegressor, KNeighborsClassifier
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsRegressor
 from sklearn.metrics import (
     r2_score, mean_squared_error, mean_absolute_error,
     accuracy_score, roc_auc_score
@@ -59,7 +60,21 @@ def optuna_lgbm_pruning_callback(trial, metric, env):
 
 
 # --- Regression Objectives ---
-def optimize_lgbm_reg(trial, X_tr, y_tr, X_va, y_va):
+def optimize_lgbm_reg(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray, 
+                     X_va: np.ndarray, y_va: np.ndarray) -> float:
+    """
+    Optimize LightGBM regressor hyperparameters.
+    
+    Args:
+        trial: Optuna trial object for hyperparameter optimization
+        X_tr: Training features
+        y_tr: Training targets
+        X_va: Validation features
+        y_va: Validation targets
+    
+    Returns:
+        float: Mean absolute error score
+    """
     params = {
         'objective': 'regression_l1', 'metric': 'l1', 'n_estimators': 1000,
         'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.1, log=True),
@@ -91,7 +106,11 @@ def optimize_lgbm_reg(trial, X_tr, y_tr, X_va, y_va):
         print(f"Trial failed for LGBM Reg: {e}")
         raise TrialPruned() # Prune on other errors
 
-def optimize_xgb_reg(trial, X_tr, y_tr, X_va, y_va):
+def optimize_xgb_reg(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
+                    X_va: np.ndarray, y_va: np.ndarray) -> float:
+    """
+    Optimize XGBoost regressor hyperparameters.
+    """
     params = {
         'objective': 'reg:squarederror', 'n_estimators': 1000,
         'eta': trial.suggest_float('eta', 0.005, 0.1, log=True),
@@ -100,7 +119,9 @@ def optimize_xgb_reg(trial, X_tr, y_tr, X_va, y_va):
         'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
         'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0, log=True),
         'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 10.0, log=True),
-        'tree_method': COMPUTE_PARAMS['xgb_tree_method'], 'random_state': RANDOM_STATE, 'verbosity': 0
+        'tree_method': COMPUTE_PARAMS['xgb_tree_method'],
+        'random_state': RANDOM_STATE,
+        'verbosity': 0
     }
     xgb_params = params.copy()
     xgb_params['alpha'] = xgb_params.pop('reg_alpha')
@@ -119,82 +140,172 @@ def optimize_xgb_reg(trial, X_tr, y_tr, X_va, y_va):
         preds = model.predict(X_va)
         mse = mean_squared_error(y_va, preds)
         score = np.sqrt(mse)
-        if np.isnan(score): raise TrialPruned("RMSE score is NaN")
+        if np.isnan(score):
+            print(f"Trial pruned: RMSE score is NaN")
+            raise TrialPruned("RMSE score is NaN")
         return score
+    except TrialPruned as e:
+        print(f"Trial pruned during optimization: {e}")
+        raise
     except Exception as e:
         print(f"Trial failed for XGB Reg: {e}")
         raise TrialPruned()
 
-def optimize_rf_reg(trial, X_tr, y_tr, X_va, y_va):
-    n_estimators = trial.suggest_int('n_estimators', 50, 300)
-    max_depth = trial.suggest_int('max_depth', 5, 50, log=True)
-    min_samples_split = trial.suggest_int('min_samples_split', 2, 20)
-    min_samples_leaf = trial.suggest_int('min_samples_leaf', 1, 20)
-    max_features = trial.suggest_float('max_features', 0.1, 1.0)
-    model = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth,
-                                  min_samples_split=min_samples_split, min_samples_leaf=min_samples_leaf,
-                                  max_features=max_features, random_state=RANDOM_STATE, n_jobs=-1)
+def optimize_rf_reg(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
+                   X_va: np.ndarray, y_va: np.ndarray) -> float:
+    """
+    Optimize Random Forest regressor hyperparameters.
+    """
     try:
+        params = {
+            'n_estimators': trial.suggest_int('n_estimators', 50, 300),
+            'max_depth': trial.suggest_int('max_depth', 5, 50, log=True),
+            'min_samples_split': trial.suggest_int('min_samples_split', 2, 20),
+            'min_samples_leaf': trial.suggest_int('min_samples_leaf', 1, 20),
+            'max_features': trial.suggest_float('max_features', 0.1, 1.0),
+            'random_state': RANDOM_STATE,
+            'n_jobs': -1
+        }
+        model = RandomForestRegressor(**params)
         model.fit(X_tr, y_tr)
         preds = model.predict(X_va)
         score = r2_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("R2 score is NaN")
+        if np.isnan(score):
+            print(f"Trial pruned: R2 score is NaN")
+            raise TrialPruned("R2 score is NaN")
         return score
+    except TrialPruned as e:
+        print(f"Trial pruned during optimization: {e}")
+        raise
     except Exception as e:
         print(f"Trial failed for RF Reg: {e}")
         raise TrialPruned()
 
-def optimize_ridge(trial, X_tr, y_tr, X_va, y_va):
-    alpha = trial.suggest_float('alpha', 1e-4, 1e2, log=True)
-    model = Ridge(alpha=alpha, random_state=RANDOM_STATE)
+def optimize_ridge(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
+                  X_va: np.ndarray, y_va: np.ndarray) -> float:
+    """
+    Optimize Ridge regression hyperparameters.
+    """
     try:
+        alpha = trial.suggest_float('alpha', 1e-4, 1e2, log=True)
+        model = Ridge(alpha=alpha, random_state=RANDOM_STATE)
         model.fit(X_tr, y_tr)
         preds = model.predict(X_va)
         score = r2_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("R2 score is NaN")
+        if np.isnan(score):
+            print(f"Trial pruned: R2 score is NaN")
+            raise TrialPruned("R2 score is NaN")
         return score
+    except TrialPruned as e:
+        print(f"Trial pruned during optimization: {e}")
+        raise
     except Exception as e:
         print(f"Trial failed for Ridge: {e}")
         raise TrialPruned()
 
-def optimize_mlp_reg(trial, X_tr, y_tr, X_va, y_va):
-    hidden_layer_sizes = (trial.suggest_int('n_units_l1', 32, 128), trial.suggest_int('n_units_l2', 16, 64))
-    activation = trial.suggest_categorical('activation', ['relu', 'tanh'])
-    solver = trial.suggest_categorical('solver', ['adam', 'sgd'])
-    alpha = trial.suggest_float('alpha', 1e-5, 1e-1, log=True)
-    learning_rate_init = trial.suggest_float('learning_rate_init', 1e-4, 1e-2, log=True)
-    model = MLPRegressor(hidden_layer_sizes=hidden_layer_sizes, activation=activation, solver=solver,
-                         alpha=alpha, learning_rate_init=learning_rate_init, max_iter=500,
-                         early_stopping=True, random_state=RANDOM_STATE)
+def optimize_mlp_reg(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
+                    X_va: np.ndarray, y_va: np.ndarray) -> float:
+    """
+    Optimize Multi-layer Perceptron regressor hyperparameters.
+    
+    Args:
+        trial: Optuna trial object for hyperparameter optimization
+        X_tr: Training features
+        y_tr: Training targets
+        X_va: Validation features
+        y_va: Validation targets
+    
+    Returns:
+        float: R2 score on validation set
+    """
     try:
+        hidden_layer_sizes = (
+            trial.suggest_int('n_units_l1', 32, 128),
+            trial.suggest_int('n_units_l2', 16, 64)
+        )
+        activation = trial.suggest_categorical('activation', ['relu', 'tanh'])
+        solver = trial.suggest_categorical('solver', ['adam', 'sgd'])
+        alpha = trial.suggest_float('alpha', 1e-5, 1e-1, log=True)
+        learning_rate_init = trial.suggest_float('learning_rate_init', 1e-4, 1e-2, log=True)
+        
+        model = MLPRegressor(
+            hidden_layer_sizes=hidden_layer_sizes,
+            activation=activation,
+            solver=solver,
+            alpha=alpha,
+            learning_rate_init=learning_rate_init,
+            max_iter=500,
+            early_stopping=True,
+            random_state=RANDOM_STATE
+        )
+        
         model.fit(X_tr, y_tr)
         preds = model.predict(X_va)
         score = r2_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("R2 score is NaN")
+        if np.isnan(score):
+            print(f"Trial pruned: R2 score is NaN")
+            raise TrialPruned("R2 score is NaN")
         return score
+    except TrialPruned as e:
+        print(f"Trial pruned during optimization: {e}")
+        raise
     except Exception as e:
         print(f"Trial failed for MLP Reg: {e}")
         raise TrialPruned()
 
-def optimize_knn_reg(trial, X_tr, y_tr, X_va, y_va):
-    params = {
-        'n_neighbors': trial.suggest_int('n_neighbors', 3, 30),
-        'weights': trial.suggest_categorical('weights', ['uniform', 'distance']),
-        'p': trial.suggest_int('p', 1, 2)
-    }
-    model = KNeighborsRegressor(**params, n_jobs=-1)
+def optimize_knn_reg(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
+                    X_va: np.ndarray, y_va: np.ndarray) -> float:
+    """
+    Optimize K-Nearest Neighbors regressor hyperparameters.
+    
+    Args:
+        trial: Optuna trial object for hyperparameter optimization
+        X_tr: Training features
+        y_tr: Training targets
+        X_va: Validation features
+        y_va: Validation targets
+    
+    Returns:
+        float: R2 score on validation set
+    """
     try:
+        params = {
+            'n_neighbors': trial.suggest_int('n_neighbors', 3, 30),
+            'weights': trial.suggest_categorical('weights', ['uniform', 'distance']),
+            'p': trial.suggest_int('p', 1, 2),
+            'n_jobs': -1
+        }
+        model = KNeighborsRegressor(**params)
         model.fit(X_tr, y_tr)
         preds = model.predict(X_va)
         score = r2_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("R2 score is NaN")
+        if np.isnan(score):
+            print(f"Trial pruned: R2 score is NaN")
+            raise TrialPruned("R2 score is NaN")
         return score
+    except TrialPruned as e:
+        print(f"Trial pruned during optimization: {e}")
+        raise
     except Exception as e:
         print(f"Trial failed for KNN Reg: {e}")
         raise TrialPruned()
 
 # --- Classification Objectives ---
-def optimize_lgbm_cls(trial, X_tr, y_tr, X_va, y_va):
+def optimize_lgbm_cls(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
+                     X_va: np.ndarray, y_va: np.ndarray) -> float:
+    """
+    Optimize LightGBM classifier hyperparameters.
+    
+    Args:
+        trial: Optuna trial object for hyperparameter optimization
+        X_tr: Training features
+        y_tr: Training targets
+        X_va: Validation features
+        y_va: Validation targets
+    
+    Returns:
+        float: ROC-AUC score on validation set
+    """
     params = {
         'objective': 'binary', 'metric': 'auc', 'n_estimators': 1000,
         'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
@@ -274,7 +385,7 @@ def optimize_rf_cls(trial, X_tr, y_tr, X_va, y_va):
         print(f"Trial failed for RF Cls: {e}")
         raise TrialPruned()
 
-def optimize_logistic_regression(trial, X_tr, y_tr, X_va, y_va):
+def optimize_logistic_regression_cls(trial, X_tr, y_tr, X_va, y_va):
     C = trial.suggest_float('C', 1e-4, 1e2, log=True)
     solver = trial.suggest_categorical('solver', ['liblinear', 'saga'])
     penalty = trial.suggest_categorical('penalty', ['l1', 'l2'])
@@ -324,7 +435,7 @@ def optimize_mlp_cls(trial, X_tr, y_tr, X_va, y_va):
         print(f"Trial failed for MLP Cls: {e}")
         raise TrialPruned()
 
-def optimize_svc(trial, X_tr, y_tr, X_va, y_va):
+def optimize_svc_cls(trial, X_tr, y_tr, X_va, y_va):
     kernel = trial.suggest_categorical('kernel', ['linear', 'rbf', 'poly'])
     
     if kernel == 'linear':
@@ -358,7 +469,22 @@ def optimize_svc(trial, X_tr, y_tr, X_va, y_va):
         raise TrialPruned()
 
 # --- Helper Function for Model Instantiation ---
-def get_final_model_instance(ModelClass, best_params, **kwargs):
+def get_final_model_instance(
+    ModelClass: type,
+    best_params: Optional[Dict[str, Any]],
+    **kwargs
+) -> Tuple[BaseEstimator, Optional[Dict[str, Any]]]:
+    """
+    Create a model instance with the best parameters found during optimization.
+    
+    Args:
+        ModelClass: The scikit-learn compatible model class
+        best_params: Dictionary of best parameters from optimization
+        **kwargs: Additional parameters to pass to the model
+    
+    Returns:
+        tuple: (Instantiated model, Best parameters used)
+    """
     if not best_params:
         print(f"Warning: No best parameters found for {ModelClass.__name__}. Using default parameters.")
         return ModelClass(random_state=RANDOM_STATE, **kwargs) if 'random_state' in ModelClass().get_params() else ModelClass(**kwargs)
@@ -387,64 +513,200 @@ def get_final_model_instance(ModelClass, best_params, **kwargs):
 
 
 # --- Model Definition Functions ---
-def get_base_regressors(random_state=42):
+def get_base_regressors(random_state: int = 42) -> Dict[str, BaseEstimator]:
     """
-    Returns a dictionary of base regression models (6 total).
-    Each is instantiated with default or minimal parameters, 
-    plus a random_state for reproducibility.
+    Get dictionary of base regression models with default parameters.
+    
+    Args:
+        random_state: Random seed for reproducibility
+    
+    Returns:
+        dict: Dictionary of initialized regression models
     """
     return {
         # Tree-based learners
-        'LGBM': lgb.LGBMRegressor(random_state=random_state, n_jobs=-1, verbosity=-1),
-        'XGB': xgb.XGBRegressor(random_state=random_state, verbosity=0),
-        'RandomForest': RandomForestRegressor(random_state=random_state, n_jobs=-1),
+        'LGBM': lgb.LGBMRegressor(
+            objective='regression_l1', 
+            metric='l1', 
+            n_estimators=1000,
+            learning_rate=0.05,  # Middle of range 0.005-0.1
+            num_leaves=60,       # Middle of range 20-100
+            max_depth=17,        # Middle of range 5-30
+            subsample=0.8,       # Middle of range 0.6-1.0
+            colsample_bytree=0.8, # Middle of range 0.6-1.0
+            reg_alpha=0.1,       # Middle of log range 1e-8-10.0
+            reg_lambda=0.1,      # Middle of log range 1e-8-10.0
+            min_child_samples=50, # Middle of range 5-100
+            device=COMPUTE_PARAMS['lgbm_device'],
+            random_state=random_state, 
+            n_jobs=-1, 
+            verbosity=-1
+        ),
+        'XGB': xgb.XGBRegressor(
+            objective='reg:squarederror', 
+            n_estimators=1000,
+            eta=0.05,            # Middle of log range 0.005-0.1
+            max_depth=6,         # Middle of range 3-10
+            subsample=0.75,      # Middle of range 0.5-1.0
+            colsample_bytree=0.75, # Middle of range 0.5-1.0
+            alpha=0.1,           # Middle of log range 1e-8-10.0
+            lambda_=0.1,         # Middle of log range 1e-8-10.0
+            tree_method=COMPUTE_PARAMS['xgb_tree_method'],
+            random_state=random_state, 
+            verbosity=0
+        ),
+        'RandomForest': RandomForestRegressor(
+            n_estimators=175,    # Middle of range 50-300
+            max_depth=25,        # Middle of log range 5-50
+            min_samples_split=10, # Middle of range 2-20
+            min_samples_leaf=10,  # Middle of range 1-20
+            max_features=0.5,    # Middle of range 0.1-1.0
+            random_state=random_state, 
+            n_jobs=-1
+        ),
 
         # Linear model
-        'Ridge': Ridge(random_state=random_state),
+        'Ridge': Ridge(
+            alpha=1.0,           # Middle of log range 1e-4-1e2
+            random_state=random_state
+        ),
 
         # Neural network
-        'MLP': MLPRegressor(random_state=random_state, max_iter=500, hidden_layer_sizes=(128, 64), activation='relu', solver='adam', alpha=1e-5, learning_rate_init=1e-3, early_stopping=True, n_iter_no_change=100),
+        'MLP': MLPRegressor(
+            hidden_layer_sizes=(80, 40),  # Middle of ranges (32-128, 16-64)
+            activation='relu',            # Default from optimization
+            solver='adam',                # Default from optimization
+            alpha=1e-3,                  # Middle of log range 1e-5-1e-1
+            learning_rate_init=1e-3,     # Middle of log range 1e-4-1e-2
+            max_iter=500,
+            early_stopping=True,
+            random_state=random_state
+        ),
 
         # Distance-based
-        'KNN': KNeighborsRegressor(n_jobs=-1),
+        'KNN': KNeighborsRegressor(
+            n_neighbors=15,      # Middle of range 3-30
+            weights='distance',  # Better default than 'uniform'
+            p=2,                 # Euclidean distance
+            n_jobs=-1
+        ),
     }
 
 
 def get_base_classifiers(random_state=42):
     """
     Returns a dictionary of base classification models (6 total).
-    Each is instantiated with default or minimal parameters, 
+    Each is instantiated with optimized default parameters, 
     plus a random_state for reproducibility.
     """
     return {
         # Tree-based learners
-        'LGBM': lgb.LGBMClassifier(random_state=random_state, n_jobs=-1, verbosity=-1),
-        'XGB': xgb.XGBClassifier(random_state=random_state, verbosity=0),
-        'RandomForest': RandomForestClassifier(random_state=random_state, n_jobs=-1),
+        'LGBM': lgb.LGBMClassifier(
+            objective='binary', 
+            metric='auc', 
+            n_estimators=1000,
+            learning_rate=0.1,   # Middle of log range 0.01-0.3
+            num_leaves=160,      # Middle of range 20-300
+            max_depth=7,         # Middle of range 3-12
+            subsample=0.8,       # Middle of range 0.6-1.0
+            colsample_bytree=0.8, # Middle of range 0.6-1.0
+            min_child_samples=50, # Middle of range 5-100
+            reg_alpha=0.1,       # Middle of log range 1e-8-1.0
+            reg_lambda=0.1,      # Middle of log range 1e-8-1.0
+            device=COMPUTE_PARAMS['lgbm_device'],
+            random_state=random_state, 
+            n_jobs=-1, 
+            verbosity=-1
+        ),
+        'XGB': xgb.XGBClassifier(
+            objective='binary:logistic', 
+            n_estimators=1000,
+            eta=0.05,            # Middle of log range 0.005-0.1
+            max_depth=6,         # Middle of range 3-10
+            subsample=0.75,      # Middle of range 0.5-1.0
+            colsample_bytree=0.75, # Middle of range 0.5-1.0
+            alpha=0.1,           # Middle of log range 1e-8-10.0
+            lambda_=0.1,         # Middle of log range 1e-8-10.0
+            tree_method=COMPUTE_PARAMS['xgb_tree_method'],
+            random_state=random_state, 
+            verbosity=0
+        ),
+        'RandomForest': RandomForestClassifier(
+            n_estimators=275,    # Middle of range 50-500
+            max_depth=25,        # Middle of log range 5-50
+            min_samples_split=10, # Middle of range 2-20
+            min_samples_leaf=10,  # Middle of range 1-20
+            max_features=0.5,    # Middle of range 0.1-1.0
+            class_weight='balanced', # Better default for classification
+            random_state=random_state, 
+            n_jobs=-1
+        ),
 
         # Linear model
-        'LogisticRegression': LogisticRegression(random_state=random_state, max_iter=1000, n_jobs=-1),
+        'LogisticRegression': LogisticRegression(
+            C=1.0,               # Middle of log range 1e-4-1e2
+            solver='liblinear',  # Default from optimization
+            penalty='l2',        # Default from optimization
+            max_iter=2000,
+            class_weight='balanced',
+            random_state=random_state, 
+            n_jobs=-1
+        ),
 
         # Neural network
-        'MLP': MLPClassifier(random_state=random_state, max_iter=500, hidden_layer_sizes=(128, 64), activation='relu', solver='adam', alpha=1e-5, learning_rate_init=1e-3),
+        'MLP': MLPClassifier(
+            hidden_layer_sizes=(80, 40),  # Middle of ranges (32-128, 16-64)
+            activation='relu',            # Default from optimization
+            solver='adam',                # Default from optimization
+            alpha=1e-3,                  # Middle of log range 1e-5-1e-1
+            learning_rate_init=1e-3,     # Middle of log range 1e-4-1e-2
+            max_iter=500,
+            early_stopping=True,
+            random_state=random_state
+        ),
 
         # Support Vector
-        'SVC': SVC(probability=True, random_state=random_state),
+        'SVC': SVC(
+            C=1.0,               # Middle of log range 1e-2-1e2
+            kernel='rbf',        # Default from optimization
+            gamma='scale',       # Default for 'rbf' kernel
+            probability=True,
+            random_state=random_state
+        ),
     }
 
 
 def get_meta_regressor_candidates(random_state=42):
     """
-    Returns a dictionary of meta regression models (3 total).
-    Each model is well-suited as a meta-learner to stack base regressors.
+    Get meta-regressor candidates with default parameters.
+    Returns simple models suitable for meta-learning.
     """
     return {
         # One tree-based option
-        'XGB': xgb.XGBRegressor(random_state=random_state, verbosity=0, n_estimators=100),
+        'XGB': xgb.XGBRegressor(
+            n_estimators=100,
+            learning_rate=0.1,
+            max_depth=3,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=random_state,
+            verbosity=0
+        ),
 
         # Linear options
-        'Ridge': Ridge(random_state=random_state),
-        'BayesianRidge': BayesianRidge(random_state=random_state),
+        'Ridge': Ridge(
+            alpha=1.0,
+            random_state=random_state
+        ),
+        
+        'BayesianRidge': BayesianRidge(
+            n_iter=300,
+            alpha_1=1e-6,
+            alpha_2=1e-6,
+            lambda_1=1e-6,
+            lambda_2=1e-6,
+            random_state=random_state
+        )
     }
 
 
@@ -474,30 +736,39 @@ def get_meta_classifier_candidates(random_state=42):
     }
 
 # select_best_stack is defined in this file and passed as an arg to outer_cv.py
-def select_best_stack(base_model_definitions, tuned_base_params, meta_candidates,
-                      X_tr, y_tr, X_va, y_va, task='regression', cv_folds=5,
-                      random_state=42, compute_params=None):
+def select_best_stack(
+    base_model_definitions: Dict[str, BaseEstimator],
+    tuned_base_params: Dict[str, Dict[str, Any]],
+    meta_candidates: Dict[str, BaseEstimator],
+    X_tr: np.ndarray,
+    y_tr: np.ndarray,
+    X_va: np.ndarray,
+    y_va: np.ndarray,
+    task: str = 'regression',
+    cv_folds: int = 5,
+    random_state: int = 42,
+    compute_params: Optional[Dict[str, Any]] = None
+) -> Tuple[Optional[Union[StackingRegressor, StackingClassifier]], 
+           Dict[str, BaseEstimator],
+           Optional[BaseEstimator]]:
     """
-    Builds and selects the best stacking ensemble from tuned base models and meta-learner candidates.
+    Build and select the best stacking ensemble.
     
     Args:
-        base_model_definitions (dict): Dictionary of base model classes
-        tuned_base_params (dict): Dictionary of tuned parameters for base models
-        meta_candidates (dict): Dictionary of meta-learner candidates
-        X_tr (pd.DataFrame): Training features
-        y_tr (pd.Series): Training targets
-        X_va (pd.DataFrame): Validation features
-        y_va (pd.Series): Validation targets
-        task (str): 'regression' or 'classification'
-        cv_folds (int): Number of CV folds for stacking
-        random_state (int): Random state for reproducibility
-        compute_params (dict): Dictionary of compute-related parameters
+        base_model_definitions: Dictionary of base model classes
+        tuned_base_params: Dictionary of tuned parameters for base models
+        meta_candidates: Dictionary of meta-learner candidates
+        X_tr: Training features
+        y_tr: Training targets
+        X_va: Validation features
+        y_va: Validation targets
+        task: Type of task ('regression' or 'classification')
+        cv_folds: Number of cross-validation folds
+        random_state: Random seed for reproducibility
+        compute_params: Dictionary of compute-related parameters
     
     Returns:
-        tuple: (best_stack, best_base_models, best_meta)
-            - best_stack: Best stacking ensemble model
-            - best_base_models: Dictionary of tuned base models used in the stack
-            - best_meta: Meta-learner used in the best stack
+        tuple: (Best stacking ensemble, Dictionary of tuned base models, Best meta-learner)
     """
     print(f"  Building stacking ensemble for {task}...")
     

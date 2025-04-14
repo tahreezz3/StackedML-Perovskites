@@ -15,45 +15,52 @@
 # =============================================================================
 # 1. LIBRARY IMPORTS
 # =============================================================================
+# Standard library imports
 import pandas as pd
 import time
-from collections import Counter, defaultdict
+from collections import defaultdict
 
+# Scientific and ML imports
+import numpy as np
 from sklearn.model_selection import train_test_split, KFold
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import r2_score, mean_absolute_error, accuracy_score, roc_auc_score, mean_squared_error
-from sklearn.ensemble import StackingRegressor, StackingClassifier, RandomForestRegressor, GradientBoostingRegressor, RandomForestClassifier, GradientBoostingClassifier
-from sklearn.linear_model import Ridge, BayesianRidge, LogisticRegression
-from sklearn.neural_network import MLPRegressor, MLPClassifier
-from sklearn.svm import SVR, SVC
-from sklearn.neighbors import KNeighborsRegressor, KNeighborsClassifier
-from sklearn.feature_selection import SelectFromModel, SelectKBest, f_regression, mutual_info_regression
+from sklearn.metrics import r2_score, mean_absolute_error, accuracy_score, roc_auc_score
 
+# Deep learning frameworks
 import lightgbm
 import xgboost
 import shap
 
-from utils import run_optuna_study, get_compute_device_params # Updated utils imports
-
+# Local imports
+from utils import run_optuna_study, get_compute_device_params
 from config import *
 from model_definitions import (
-    get_base_regressors, get_base_classifiers, get_meta_regressor_candidates, get_meta_classifier_candidates, get_final_model_instance,
-    # Import optimization functions
-    optimize_lgbm_reg, optimize_xgb_reg, optimize_ridge, optimize_rf_reg, optimize_gb_reg, optimize_bayes_ridge,
-    optimize_lgbm_cls, optimize_xgb_cls, optimize_logistic_regression, optimize_rf_cls, optimize_gb_cls,
-    # Now added to model_definitions.py
+    get_base_regressors, get_base_classifiers,
+    get_meta_regressor_candidates, get_meta_classifier_candidates,
+    get_final_model_instance,
+    # Optimization functions - regression
+    optimize_lgbm_reg, optimize_xgb_reg, optimize_ridge,
+    optimize_rf_reg, optimize_knn_reg, optimize_mlp_reg,
+    # Optimization functions - classification
+    optimize_lgbm_cls, optimize_xgb_cls, optimize_logistic_regression_cls,
+    optimize_rf_cls, optimize_mlp_cls, optimize_svc_cls,
     select_best_stack
 )
-
 from outer_cv import run_outer_cv_loop
 from pipeline_steps import (
     aggregate_cv_results,
     select_final_model,
     evaluate_on_test_set,
     run_shap_analysis,
-    save_artifacts # Import new function
+    save_artifacts
 )
 
+# Initialize timing
+start_time = time.time()
+
+# =============================================================================
+# 1. CONFIGURATION AND SETUP
+# =============================================================================
+print("--- 1. Initializing ML Pipeline ---")
 
 # =============================================================================
 # 2. DATA LOADING AND INITIAL SPLIT
@@ -108,23 +115,16 @@ OPTIMIZATION_FUNCTIONS_REG = {
     'XGB': optimize_xgb_reg,
     'Ridge': optimize_ridge,
     'RandomForest': optimize_rf_reg,
-    'GradientBoosting': optimize_gb_reg,
-    'BayesianRidge': optimize_bayes_ridge,
-    # Add others if defined in needed
-    #'MLP': optimize_mlp_reg,
-    #'SVR': optimize_svr,
-    #'KNN': optimize_knn_reg,
+    'MLP': optimize_mlp_reg,
+    'KNN': optimize_knn_reg, 
 }
 OPTIMIZATION_FUNCTIONS_CLS = {
     'LGBM': optimize_lgbm_cls,
     'XGB': optimize_xgb_cls,
-    'LogisticRegression': optimize_logistic_regression, # Corrected function name
+    'LogisticRegression': optimize_logistic_regression_cls, # Corrected function name
     'RandomForest': optimize_rf_cls,
-    'GradientBoosting': optimize_gb_cls,
-    # Add others if defined in needed
-    #'MLP': optimize_mlp_cls,
-    #'SVC': optimize_svc,
-    #'KNN': optimize_knn_cls,
+    'MLP': optimize_mlp_cls,
+    'SVC': optimize_svc_cls,
 }
 
 # Get model definitions and meta candidates
@@ -252,8 +252,8 @@ save_artifacts(
     selected_features_final,
     outer_fold_results_reg,
     outer_fold_results_cls,
-    output_dir=OUTPUT_DIR, # Use config variable
-    save_models=SAVE_MODEL,
+    output_dir=OUTPUT_DIR,
+    save_models=SAVE_MODELS,  # Fixed variable name
     save_features=SAVE_FEATURES,
     save_results=SAVE_RESULTS
 )
@@ -261,4 +261,6 @@ save_artifacts(
 # =============================================================================
 # 11. END OF SCRIPT
 # =============================================================================
+end_time = time.time()
 print("\n--- Pipeline Execution Finished ---")
+print(f"Total Execution Time: {end_time - start_time:.2f} seconds")

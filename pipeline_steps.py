@@ -25,6 +25,8 @@ from config import (
 )
 # Utility imports could also be added here if needed
 
+from model_definitions import get_final_model_instance
+
 
 def aggregate_cv_results(outer_fold_results_reg, outer_fold_results_cls):
     """
@@ -89,29 +91,24 @@ def select_final_model(
     fold_scalers,
     fold_selectors,
     fold_selected_features_list,
-    n_splits_outer_cv # For context/logging
+    n_splits_outer_cv
 ):
     """
-    Selects the final regressor and classifier based on the best performing fold
-    in the outer cross-validation.
-    Uses the scaler, selector, and features from the best *regression* fold for consistency
-    when processing the final test set later.
-
+    Selects the final regressor and classifier based on the best performing fold.
+    
     Args:
-        outer_fold_results_reg (dict): Regression metrics per fold.
-        outer_fold_results_cls (dict): Classification metrics per fold.
-        all_fold_models_reg (list): List of trained regressor models per fold.
-        all_fold_models_cls (list): List of trained classifier models per fold.
-        fold_scalers (list): List of fitted scalers per fold.
-        fold_selectors (list): List of fitted selectors per fold.
-        fold_selected_features_list (list): List of selected features per fold.
-        n_splits_outer_cv (int): Number of outer CV splits.
-
+        outer_fold_results_reg (dict): Dictionary with regression metrics per fold
+        outer_fold_results_cls (dict): Dictionary with classification metrics per fold
+        all_fold_models_reg (list): List of trained regression models per fold
+        all_fold_models_cls (list): List of trained classification models per fold
+        fold_scalers (list): List of fitted scalers per fold
+        fold_selectors (list): List of fitted feature selectors per fold
+        fold_selected_features_list (list): List of selected features per fold
+        n_splits_outer_cv (int): Number of outer CV folds
+    
     Returns:
-        tuple: (
-            final_regressor, final_classifier, final_scaler, final_selector,
-            selected_features_final, best_fold_idx_reg, best_fold_idx_cls
-        )
+        tuple: (final_regressor, final_classifier, final_scaler, final_selector,
+               selected_features_final, best_fold_idx_reg, best_fold_idx_cls)
     """
     print(f"\n--- 7. Selecting Final Model (Based on best CV Fold Performance) ---")
 
@@ -123,48 +120,65 @@ def select_final_model(
     best_fold_idx_reg = -1
     best_fold_idx_cls = -1
 
-    # --- Select Best Fold Based on Validation ROC-AUC (for Classifier) and R2 (for Regressor) ---
-    roc_auc_scores = outer_fold_results_cls.get('ROC-AUC', [])
-    r2_scores = outer_fold_results_reg.get('R2', [])
-
-    if roc_auc_scores and not all(np.isnan(roc_auc_scores)):
-        best_fold_idx_cls = np.nanargmax(roc_auc_scores)
-        final_classifier = all_fold_models_cls[best_fold_idx_cls]
-        print(f"  Best Classification Fold (Max ROC-AUC): {best_fold_idx_cls + 1}/{n_splits_outer_cv} (ROC-AUC: {roc_auc_scores[best_fold_idx_cls]:.4f})")
-        if final_classifier:
-            print(f"  Selected Final Classifier: {final_classifier.__class__.__name__} (from fold {best_fold_idx_cls + 1})")
+    try:
+        # --- Select Best Regression Fold Based on R2 Score ---
+        r2_scores = outer_fold_results_reg.get('R2', [])
+        if r2_scores and not all(np.isnan(r2_scores)):
+            best_fold_idx_reg = np.nanargmax(r2_scores)
+            best_regressor = all_fold_models_reg[best_fold_idx_reg]
+            
+            if best_regressor:
+                try:
+                    # Properly instantiate the final regressor with best parameters
+                    final_regressor, best_params = get_final_model_instance(
+                        best_regressor.__class__,
+                        best_regressor.get_params()
+                    )
+                    # Use the preprocessing components from the best regression fold
+                    final_scaler = fold_scalers[best_fold_idx_reg]
+                    final_selector = fold_selectors[best_fold_idx_reg]
+                    selected_features_final = fold_selected_features_list[best_fold_idx_reg]
+                    
+                    print(f"  Best Regression Fold: {best_fold_idx_reg + 1}/{n_splits_outer_cv}")
+                    print(f"  R2 Score: {r2_scores[best_fold_idx_reg]:.4f}")
+                    print(f"  Selected Model: {final_regressor.__class__.__name__}")
+                    print(f"  Selected Features: {len(selected_features_final)} count")
+                    
+                except Exception as e:
+                    print(f"  Error instantiating final regressor: {e}")
+            else:
+                print(f"  Warning: Best regression fold {best_fold_idx_reg + 1} had no valid model.")
         else:
-             print(f"  Warning: Best classification fold {best_fold_idx_cls + 1} had no valid model stored.")
-    else:
-        print("  Could not determine best classification fold (no valid ROC-AUC scores). No final classifier selected.")
+            print("  No valid regression scores found. Skipping regressor selection.")
 
-    if r2_scores and not all(np.isnan(r2_scores)):
-        best_fold_idx_reg = np.nanargmax(r2_scores)
-        final_regressor = all_fold_models_reg[best_fold_idx_reg]
-        # Use the scaler, selector, and features from the best *regression* fold for test set processing
-        final_scaler = fold_scalers[best_fold_idx_reg]
-        final_selector = fold_selectors[best_fold_idx_reg]
-        selected_features_final = fold_selected_features_list[best_fold_idx_reg]
-        print(f"  Best Regression Fold (Max R2): {best_fold_idx_reg + 1}/{n_splits_outer_cv} (R2: {r2_scores[best_fold_idx_reg]:.4f})")
-        if final_regressor:
-            print(f"  Selected Final Regressor: {final_regressor.__class__.__name__} (from fold {best_fold_idx_reg + 1})")
+        # --- Select Best Classification Fold Based on ROC-AUC Score ---
+        roc_auc_scores = outer_fold_results_cls.get('ROC-AUC', [])
+        if roc_auc_scores and not all(np.isnan(roc_auc_scores)):
+            best_fold_idx_cls = np.nanargmax(roc_auc_scores)
+            best_classifier = all_fold_models_cls[best_fold_idx_cls]
+            
+            if best_classifier:
+                try:
+                    # Properly instantiate the final classifier with best parameters
+                    final_classifier, best_params = get_final_model_instance(
+                        best_classifier.__class__,
+                        best_classifier.get_params()
+                    )
+                    print(f"  Best Classification Fold: {best_fold_idx_cls + 1}/{n_splits_outer_cv}")
+                    print(f"  ROC-AUC Score: {roc_auc_scores[best_fold_idx_cls]:.4f}")
+                    print(f"  Selected Model: {final_classifier.__class__.__name__}")
+                    
+                except Exception as e:
+                    print(f"  Error instantiating final classifier: {e}")
+            else:
+                print(f"  Warning: Best classification fold {best_fold_idx_cls + 1} had no valid model.")
         else:
-            print(f"  Warning: Best regression fold {best_fold_idx_reg + 1} had no valid model stored.")
-        if final_scaler:
-            print(f"  Using Scaler from fold {best_fold_idx_reg + 1}")
-        if final_selector:
-             print(f"  Using Selector ({final_selector.__class__.__name__}) from fold {best_fold_idx_reg + 1}")
-        if selected_features_final:
-             print(f"  Using Selected Features ({len(selected_features_final)} count) from fold {best_fold_idx_reg + 1}")
+            print("  No valid classification scores found. Skipping classifier selection.")
 
-    else:
-        print("  Could not determine best regression fold (no valid R2 scores). No final regressor, scaler, selector, or features selected.")
-
-    # Handle case where best folds might have yielded None models (e.g., stacking failed)
-    if best_fold_idx_cls != -1 and final_classifier is None:
-        print(f"  Warning: Model from best classification fold ({best_fold_idx_cls + 1}) was None.")
-    if best_fold_idx_reg != -1 and final_regressor is None:
-         print(f"  Warning: Model from best regression fold ({best_fold_idx_reg + 1}) was None.")
+    except Exception as e:
+        print(f"Error during model selection: {e}")
+        import traceback
+        print(traceback.format_exc())
 
     return (
         final_regressor, final_classifier, final_scaler, final_selector,
@@ -182,21 +196,6 @@ def evaluate_on_test_set(
     """
     Evaluates the selected final models on the hold-out test set.
     Applies the scaling and feature selection steps derived from the best CV fold.
-
-    Args:
-        X_test (pd.DataFrame): Test set features.
-        y_test_reg (pd.Series): Test set regression target.
-        y_test_cls (pd.Series): Test set classification target.
-        final_regressor: The selected final regression model.
-        final_classifier: The selected final classification model.
-        final_scaler: The fitted scaler from the best CV fold.
-        final_selector: The fitted feature selector from the best CV fold.
-        selected_features_final (list): List of feature names selected by the final_selector.
-        feature_names (list): List of all original feature names.
-
-    Returns:
-        tuple: (X_test_scaled_df, X_test_sel_df) - Processed test dataframes for SHAP.
-               Returns (None, None) if preprocessing fails.
     """
     print("\n--- 8. Final Evaluation on Unseen Test Set ---")
 
@@ -204,74 +203,69 @@ def evaluate_on_test_set(
         print("  Error: Final scaler is not available. Cannot evaluate on test set.")
         return None, None
     if selected_features_final is None:
-         print("  Error: Final selected features list is not available. Cannot evaluate on test set.")
-         return None, None
+        print("  Error: Final selected features list is not available. Cannot evaluate on test set.")
+        return None, None
 
-    # --- Apply the SAME preprocessing as the best fold --- #
-    # 1. Scale the test data using the scaler fitted on the best fold's *training* data
-    X_test_scaled = final_scaler.transform(X_test)
-    X_test_scaled_df = pd.DataFrame(X_test_scaled, index=X_test.index, columns=feature_names)
-    print(f"  Scaled test data shape: {X_test_scaled_df.shape}")
+    try:
+        # --- Apply the SAME preprocessing as the best fold --- #
+        # 1. Scale the test data using the scaler fitted on the best fold's training data
+        X_test_scaled = final_scaler.transform(X_test)
+        X_test_scaled_df = pd.DataFrame(X_test_scaled, index=X_test.index, columns=feature_names)
+        print(f"  Scaled test data shape: {X_test_scaled_df.shape}")
 
-    # 2. Apply feature selection using the selector fitted on the best fold's *training* data
-    X_test_sel = X_test_scaled # Default if no selector was used
-    if final_selector:
-        try:
+        # 2. Select features using the selector from the best fold
+        if final_selector:
             X_test_sel = final_selector.transform(X_test_scaled)
-            print(f"  Applied feature selection. Selected test data shape: {X_test_sel.shape}")
-        except ValueError as e:
-            print(f"  Error applying feature selector to test data: {e}")
-            print(f"  Expected {final_selector.n_features_in_} features, got {X_test_scaled.shape[1]}")
-            return None, None # Cannot proceed if selection fails
-    else:
-        print("  No feature selector applied (selector was None).")
+            X_test_sel_df = pd.DataFrame(X_test_sel, index=X_test.index, columns=selected_features_final)
+            print(f"  Selected features test data shape: {X_test_sel_df.shape}")
+        else:
+            X_test_sel_df = X_test_scaled_df[selected_features_final]
+            print(f"  Using manually selected features, test data shape: {X_test_sel_df.shape}")
 
-    # Convert selected test data to DataFrame using the selected feature names
-    X_test_sel_df = pd.DataFrame(X_test_sel, index=X_test.index, columns=selected_features_final)
+        # --- Evaluate Regressor --- #
+        if final_regressor:
+            print("\n  Evaluating Final Regressor on Test Set...")
+            try:
+                y_pred_reg_test = final_regressor.predict(X_test_sel_df)
+                test_r2 = r2_score(y_test_reg, y_pred_reg_test)
+                test_mae = mean_absolute_error(y_test_reg, y_pred_reg_test)
+                test_rmse = np.sqrt(mean_squared_error(y_test_reg, y_pred_reg_test))
+                print(f"    Test R2: {test_r2:.4f}")
+                print(f"    Test MAE: {test_mae:.4f}")
+                print(f"    Test RMSE: {test_rmse:.4f}")
+            except Exception as e:
+                print(f"    Error during regression evaluation: {e}")
+        else:
+            print("\n  Skipping Test Set Regression Evaluation (No final model selected).")
 
+        # --- Evaluate Classifier --- #
+        if final_classifier:
+            print("\n  Evaluating Final Classifier on Test Set...")
+            try:
+                y_pred_cls_test = final_classifier.predict(X_test_sel_df)
+                test_accuracy = accuracy_score(y_test_cls, y_pred_cls_test)
+                print(f"    Test Accuracy: {test_accuracy:.4f}")
 
-    # --- Evaluate Regressor --- #
-    if final_regressor:
-        print("\n  Evaluating Final Regressor on Test Set...")
-        try:
-            y_pred_reg_test = final_regressor.predict(X_test_sel_df)
-            test_r2 = r2_score(y_test_reg, y_pred_reg_test)
-            test_mae = mean_absolute_error(y_test_reg, y_pred_reg_test)
-            test_rmse = np.sqrt(mean_squared_error(y_test_reg, y_pred_reg_test))
-            print(f"    Test R2: {test_r2:.4f}")
-            print(f"    Test MAE: {test_mae:.4f}")
-            print(f"    Test RMSE: {test_rmse:.4f}")
-        except Exception as e:
-            print(f"    Error during regression evaluation: {e}")
-    else:
-        print("\n  Skipping Test Set Regression Evaluation (No final model selected)." )
+                # Calculate ROC AUC if possible
+                if hasattr(final_classifier, "predict_proba"):
+                    try:
+                        y_pred_proba_cls_test = final_classifier.predict_proba(X_test_sel_df)[:, 1]
+                        test_roc_auc = roc_auc_score(y_test_cls, y_pred_proba_cls_test)
+                        print(f"    Test ROC-AUC: {test_roc_auc:.4f}")
+                    except Exception as e:
+                        print(f"    Error calculating Test ROC-AUC: {e}")
+                else:
+                    print("    Test ROC-AUC: Not calculated (model lacks predict_proba)")
+            except Exception as e:
+                print(f"    Error during classification evaluation: {e}")
+        else:
+            print("\n  Skipping Test Set Classification Evaluation (No final model selected).")
 
-    # --- Evaluate Classifier --- #
-    if final_classifier:
-        print("\n  Evaluating Final Classifier on Test Set...")
-        try:
-            y_pred_cls_test = final_classifier.predict(X_test_sel_df)
-            test_accuracy = accuracy_score(y_test_cls, y_pred_cls_test)
-            print(f"    Test Accuracy: {test_accuracy:.4f}")
+        return X_test_scaled_df, X_test_sel_df # Return processed test data for SHAP
 
-            # Calculate ROC AUC if possible
-            if hasattr(final_classifier, "predict_proba"):
-                try:
-                    y_pred_proba_cls_test = final_classifier.predict_proba(X_test_sel_df)[:, 1]
-                    test_roc_auc = roc_auc_score(y_test_cls, y_pred_proba_cls_test)
-                    print(f"    Test ROC-AUC: {test_roc_auc:.4f}")
-                except ValueError as e:
-                    print(f"    Warning: Could not calculate Test ROC-AUC: {e}")
-                except Exception as e:
-                    print(f"    Error calculating Test ROC-AUC: {e}")
-            else:
-                print("    Test ROC-AUC: Not calculated (model lacks predict_proba)")
-        except Exception as e:
-            print(f"    Error during classification evaluation: {e}")
-    else:
-        print("\n  Skipping Test Set Classification Evaluation (No final model selected)." )
-
-    return X_test_scaled_df, X_test_sel_df # Return processed test data for SHAP
+    except Exception as e:
+        print(f"Error during test set evaluation: {e}")
+        return None, None
 
 def run_shap_analysis(
     final_regressor, final_classifier,

@@ -18,6 +18,8 @@ from config import (
     OPTUNA_TIMEOUT,
     N_SPLITS_OUTER_CV, # Used for printing fold numbers
     STACKING_CV_FOLDS, # Added parameter
+    OPTUNA_TRIALS_MAIN,  # Import from config instead of defining here
+    OPTUNA_TRIALS_OTHER,  # Import from config instead of defining here
     # Add any other config vars needed *directly* within the loop if not passed
 )
 # Import necessary functions/definitions (alternative: pass them as arguments)
@@ -30,7 +32,6 @@ from sklearn.linear_model import BayesianRidge, LogisticRegression
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, RandomForestClassifier, GradientBoostingClassifier
 import lightgbm as lgb
 import xgboost as xgb
-
 
 def run_outer_cv_loop(
     X_train_val,
@@ -94,11 +95,12 @@ def run_outer_cv_loop(
     # Begin outer CV
     start_time_cv = time.time()
 
-    for fold, (train_outer_idx, val_outer_idx) in enumerate(kf_outer.split(X_train_val, y_train_val_reg)): # Split based on X
-        try:
-            print(f"\n===== Outer Fold {fold+1}/{N_SPLITS_OUTER_CV} ====")
-            fold_start_time = time.time()
+    for fold, (train_outer_idx, val_outer_idx) in enumerate(kf_outer.split(X_train_val, y_train_val_reg)):
+        print(f"\n===== Outer Fold {fold+1}/{N_SPLITS_OUTER_CV} ====")
+        fold_start_time = time.time()
 
+        try:
+            # Split data for this fold
             X_tr_fold, X_va_fold = X_train_val.iloc[train_outer_idx], X_train_val.iloc[val_outer_idx]
             y_tr_reg_fold, y_va_reg_fold = y_train_val_reg.iloc[train_outer_idx], y_train_val_reg.iloc[val_outer_idx]
             y_tr_cls_fold, y_va_cls_fold = y_train_val_cls.iloc[train_outer_idx], y_train_val_cls.iloc[val_outer_idx]
@@ -176,177 +178,209 @@ def run_outer_cv_loop(
 
             # --- 5.4 Hyperparameter Tuning (On fold's selected train/val data) ---
             print(f"\n  --- 5.4 Hyperparameter Tuning (Fold {fold+1}) ---")
-            fold_tuned_params_reg = {} # Store best params for this fold's regressors
-            fold_tuned_params_cls = {} # Store best params for this fold's classifiers
+            try:
+                fold_tuned_params_reg = {}
+                fold_tuned_params_cls = {}
 
-            # Define which models to tune based on config AND available optimization functions
-            regressors_to_tune_config = {}
+                # Define which models to tune
+                regressors_to_tune_config = {}
 
-            # --- Regression Tuning --- #
-            print("\n    Tuning Regressors...")
-            for name, model_class in MODEL_REGRESSORS.items(): # Iterate through models provided
-                if name in OPTIMIZATION_FUNCTIONS_REG: # Check if optimization function is available
-                    objective_fn = OPTIMIZATION_FUNCTIONS_REG[name]
-                    # Determine n_trials based on whether it's a 'main' model or 'other'
-                    # Heuristic: Assume LGBM/XGB are main, others are 'other'
-                    is_main_model = name in ['LGBM', 'XGB']
-                    n_trials = OPTUNA_TRIALS_MAIN if is_main_model else OPTUNA_TRIALS_OTHER
+                # --- Regression Tuning --- #
+                print("\n    Tuning Regressors...")
+                for name, model_class in MODEL_REGRESSORS.items():
+                    try:
+                        if name in OPTIMIZATION_FUNCTIONS_REG:
+                            objective_fn = OPTIMIZATION_FUNCTIONS_REG[name]
+                            is_main_model = name in ['LGBM', 'XGB']
+                            n_trials = OPTUNA_TRIALS_MAIN if is_main_model else OPTUNA_TRIALS_OTHER
+                            direction = 'minimize' if name in ['LGBM', 'XGB'] else 'maximize'
 
-                    # Determine optimization direction (common practice: min MAE/RMSE, max R2/AUC)
-                    # This requires knowing what the objective function returns.
-                    # Hardcoding based on common practice for now. Adjust if objectives change.
-                    if name in ['LGBM', 'XGB']: # Assuming MAE/RMSE minimization
-                        direction = 'minimize'
-                    else: # Assuming R2 maximization for others
-                        direction = 'maximize'
+                            if is_main_model or TUNE_ALL_BASE_MODELS:
+                                regressors_to_tune_config[name] = (objective_fn, direction, n_trials)
+                        elif TUNE_ALL_BASE_MODELS:
+                            print(f"      Warning: No optimization function for {name}. Skipping tuning.")
+                    except Exception as e:
+                        print(f"      Error configuring tuning for {name}: {e}")
+                        continue
 
-                    # Add to tuning config only if tuning is enabled for this type
-                    if is_main_model or TUNE_ALL_BASE_MODELS:
-                         regressors_to_tune_config[name] = (objective_fn, direction, n_trials)
-                elif TUNE_ALL_BASE_MODELS:
-                     print(f"      Warning: Tuning enabled, but no optimization function found for {name} in OPTIMIZATION_FUNCTIONS_REG. Skipping tuning.")
+                # Run tuning with improved error handling
+                for name, (objective_fn, direction, n_trials) in regressors_to_tune_config.items():
+                    try:
+                        print(f"      Tuning {name} ({n_trials} trials, direction={direction})...")
+                        study_name = f"reg_{name}_cv_{fold+1}"
+                        study = run_optuna_study(
+                            objective_fn,
+                            X_tr_sel_df, y_tr_reg_fold,
+                            X_va_sel_df, y_va_reg_fold,
+                            n_trials=n_trials,
+                            direction=direction,
+                            study_name=study_name,
+                            timeout=OPTUNA_TIMEOUT
+                        )
+                        if study and study.best_trial:
+                            fold_tuned_params_reg[name] = study.best_params
+                            fold_best_params_reg[name][fold] = study.best_params
+                        else:
+                            print(f"      Warning: No best trial for {name}")
+                            fold_tuned_params_reg[name] = {}
+                    except Exception as e:
+                        print(f"      Error during tuning of {name}: {e}")
+                        fold_tuned_params_reg[name] = {}
 
-            # Now run the tuning loop using the dynamically built config
-            for name, (objective_fn, direction, n_trials) in regressors_to_tune_config.items():
-                print(f"      Tuning {name} ({n_trials} trials, direction={direction})...")
-                study_name = f"reg_{name}_fold{fold+1}_{int(time.time())}" # Add timestamp for uniqueness
-                study = run_optuna_study(
-                    objective_fn,
-                    X_tr_sel_df, y_tr_reg_fold, # Pass dataframes or arrays as expected by objective
-                    X_va_sel_df, y_va_reg_fold,
-                    n_trials=n_trials,
-                    direction=direction,
-                    study_name=study_name,
-                    timeout=OPTUNA_TIMEOUT
+                # --- Classification Tuning --- #
+                # Similar dynamic logic for classifiers
+                classifiers_to_tune_config = {}
+                print("\n    Tuning Classifiers...")
+                for name, model_class in MODEL_CLASSIFIERS.items():
+                    if name in OPTIMIZATION_FUNCTIONS_CLS:
+                        objective_fn = OPTIMIZATION_FUNCTIONS_CLS[name]
+                        is_main_model = name in ['LGBM', 'XGB'] # Adjust if needed
+                        n_trials = OPTUNA_TRIALS_MAIN if is_main_model else OPTUNA_TRIALS_OTHER
+                        direction = 'maximize' # Assume maximizing ROC-AUC or Accuracy
+
+                        if is_main_model or TUNE_ALL_BASE_MODELS:
+                            classifiers_to_tune_config[name] = (objective_fn, direction, n_trials)
+                    elif TUNE_ALL_BASE_MODELS:
+                        print(f"      Warning: Tuning enabled, but no optimization function found for {name} in OPTIMIZATION_FUNCTIONS_CLS. Skipping tuning.")
+
+                for name, (objective_fn, direction, n_trials) in classifiers_to_tune_config.items():
+                     print(f"      Tuning {name} ({n_trials} trials, direction={direction})...")
+                     study_name = f"cls_{name}_cv_{fold+1}"
+                     study = run_optuna_study(
+                         objective_fn,
+                         X_tr_sel_df, y_tr_cls_fold,
+                         X_va_sel_df, y_va_cls_fold,
+                         n_trials=n_trials,
+                         direction=direction,
+                         study_name=study_name,
+                         timeout=OPTUNA_TIMEOUT
+                     )
+                     if study and study.best_trial:
+                         fold_tuned_params_cls[name] = study.best_params
+                         fold_best_params_cls[name][fold] = study.best_params
+                     else:
+                         print(f"      Warning: Optuna study for {name} did not yield a best trial.")
+                         fold_tuned_params_cls[name] = {}
+
+                print("DEBUG: Finished or skipped classifier tuning.")
+
+                print("DEBUG: Proceeding to select regression stack.")
+
+                # Regression Stack
+                print("\n    Selecting best REGRESSION stack...")
+                best_stack_reg, best_base_models_reg, best_meta_reg = select_best_stack(
+                    base_model_definitions=MODEL_REGRESSORS, # Original definitions
+                    tuned_base_params=fold_tuned_params_reg, # Tuned params for this fold
+                    meta_candidates=STACKING_META_REGRESSOR_CANDIDATES,
+                    X_tr=X_tr_sel_df, # Use selected features df
+                    y_tr=y_tr_reg_fold,
+                    X_va=X_va_sel_df, # Use selected features df
+                    y_va=y_va_reg_fold,
+                    task='regression',
+                    cv_folds=STACKING_CV_FOLDS,
+                    random_state=RANDOM_STATE,
+                    compute_params=COMPUTE_PARAMS
                 )
-                if study and study.best_trial:
-                    fold_tuned_params_reg[name] = study.best_params
-                    fold_best_params_reg[name][fold] = study.best_params # Store globally too
+                all_fold_models_reg.append(best_stack_reg) # Store the best stack for this fold
+
+                # Classification Stack
+                print("\n    Selecting best CLASSIFICATION stack...")
+                best_stack_cls, best_base_models_cls, best_meta_cls = select_best_stack(
+                    base_model_definitions=MODEL_CLASSIFIERS,
+                    tuned_base_params=fold_tuned_params_cls,
+                    meta_candidates=STACKING_META_CLASSIFIER_CANDIDATES,
+                    X_tr=X_tr_sel_df,
+                    y_tr=y_tr_cls_fold,
+                    X_va=X_va_sel_df,
+                    y_va=y_va_cls_fold,
+                    task='classification',
+                    cv_folds=STACKING_CV_FOLDS,
+                    random_state=RANDOM_STATE,
+                    compute_params=COMPUTE_PARAMS
+                )
+                all_fold_models_cls.append(best_stack_cls) # Store the best stack for this fold
+
+
+                # --- 5.8 Evaluate Best Stack Model on Fold's Validation Data ---
+                print(f"\n  --- 5.8 Evaluating Best Stack on Fold {fold+1} Validation Data ---")
+
+                # Regression Evaluation
+                if best_stack_reg:
+                    y_va_pred_reg = best_stack_reg.predict(X_va_sel_df) # Predict on validation set (selected features)
+                    r2_va = r2_score(y_va_reg_fold, y_va_pred_reg)
+                    mae_va = mean_absolute_error(y_va_reg_fold, y_va_pred_reg)
+                    outer_fold_results_reg['R2'].append(r2_va)
+                    outer_fold_results_reg['MAE'].append(mae_va)
+                    print(f"    Regression Stack Validation - R2: {r2_va:.4f}, MAE: {mae_va:.4f}")
                 else:
-                    print(f"      Warning: Optuna study for {name} did not yield a best trial.")
-                    fold_tuned_params_reg[name] = {} # Store empty dict if tuning failed
+                    outer_fold_results_reg['R2'].append(np.nan)
+                    outer_fold_results_reg['MAE'].append(np.nan)
+                    print("    Regression Stack - No model selected.")
 
-            # --- Classification Tuning --- #
-            # Similar dynamic logic for classifiers
-            classifiers_to_tune_config = {}
-            print("\n    Tuning Classifiers...")
-            for name, model_class in MODEL_CLASSIFIERS.items():
-                if name in OPTIMIZATION_FUNCTIONS_CLS:
-                    objective_fn = OPTIMIZATION_FUNCTIONS_CLS[name]
-                    is_main_model = name in ['LGBM', 'XGB'] # Adjust if needed
-                    n_trials = OPTUNA_TRIALS_MAIN if is_main_model else OPTUNA_TRIALS_OTHER
-                    direction = 'maximize' # Assume maximizing ROC-AUC or Accuracy
+                # Classification Evaluation
+                if best_stack_cls:
+                    y_va_pred_cls = best_stack_cls.predict(X_va_sel_df)
+                    y_va_pred_proba_cls = best_stack_cls.predict_proba(X_va_sel_df)[:, 1]
+                    acc_va = accuracy_score(y_va_cls_fold, y_va_pred_cls)
+                    try:
+                        roc_auc_va = roc_auc_score(y_va_cls_fold, y_va_pred_proba_cls)
+                    except ValueError:
+                        print("    Warning: ROC AUC score could not be calculated (e.g., only one class present in validation fold). Setting to NaN.")
+                        roc_auc_va = np.nan
+                    outer_fold_results_cls['Accuracy'].append(acc_va)
+                    outer_fold_results_cls['ROC-AUC'].append(roc_auc_va)
+                    print(f"    Classification Stack Validation - Accuracy: {acc_va:.4f}, ROC-AUC: {roc_auc_va:.4f}")
+                else:
+                    outer_fold_results_cls['Accuracy'].append(np.nan)
+                    outer_fold_results_cls['ROC-AUC'].append(np.nan)
+                    print("    Classification Stack - No model selected.")
 
-                    if is_main_model or TUNE_ALL_BASE_MODELS:
-                        classifiers_to_tune_config[name] = (objective_fn, direction, n_trials)
-                elif TUNE_ALL_BASE_MODELS:
-                    print(f"      Warning: Tuning enabled, but no optimization function found for {name} in OPTIMIZATION_FUNCTIONS_CLS. Skipping tuning.")
+                fold_end_time = time.time()
+                print(f"===== Outer Fold {fold+1} completed in {fold_end_time - fold_start_time:.2f} seconds ====")
 
-            for name, (objective_fn, direction, n_trials) in classifiers_to_tune_config.items():
-                 print(f"      Tuning {name} ({n_trials} trials, direction={direction})...")
-                 study_name = f"cls_{name}_fold{fold+1}_{int(time.time())}"
-                 study = run_optuna_study(
-                     objective_fn,
-                     X_tr_sel_df, y_tr_cls_fold,
-                     X_va_sel_df, y_va_cls_fold,
-                     n_trials=n_trials,
-                     direction=direction,
-                     study_name=study_name,
-                     timeout=OPTUNA_TIMEOUT
-                 )
-                 if study and study.best_trial:
-                     fold_tuned_params_cls[name] = study.best_params
-                     fold_best_params_cls[name][fold] = study.best_params
-                 else:
-                     print(f"      Warning: Optuna study for {name} did not yield a best trial.")
-                     fold_tuned_params_cls[name] = {}
+            except Exception as e:
+                import traceback
+                print(f"\n!!!!!! ERROR CAUGHT IN OUTER FOLD {fold+1} !!!!!")
+                print(f"Error Type: {type(e).__name__}")
+                print(f"Error Message: {e}")
+                print("Traceback:")
+                print(traceback.format_exc())
+                print("Continuing to next fold if possible, or returning current results...")
+                # Depending on severity, you might want to 'break' or 'raise e' here.
+                # For debugging, we'll let it potentially continue to see if other folds work.
 
-            print("DEBUG: Finished or skipped classifier tuning.")
-
-            print("DEBUG: Proceeding to select regression stack.")
-
-            # Regression Stack
-            print("\n    Selecting best REGRESSION stack...")
-            best_stack_reg, best_base_models_reg, best_meta_reg = select_best_stack(
-                base_model_definitions=MODEL_REGRESSORS, # Original definitions
-                tuned_base_params=fold_tuned_params_reg, # Tuned params for this fold
-                meta_candidates=STACKING_META_REGRESSOR_CANDIDATES,
-                X_tr=X_tr_sel_df, # Use selected features df
-                y_tr=y_tr_reg_fold,
-                X_va=X_va_sel_df, # Use selected features df
-                y_va=y_va_reg_fold,
-                task='regression',
-                cv_folds=STACKING_CV_FOLDS,
-                random_state=RANDOM_STATE,
-                compute_params=COMPUTE_PARAMS
-            )
-            all_fold_models_reg.append(best_stack_reg) # Store the best stack for this fold
-
-            # Classification Stack
-            print("\n    Selecting best CLASSIFICATION stack...")
-            best_stack_cls, best_base_models_cls, best_meta_cls = select_best_stack(
-                base_model_definitions=MODEL_CLASSIFIERS,
-                tuned_base_params=fold_tuned_params_cls,
-                meta_candidates=STACKING_META_CLASSIFIER_CANDIDATES,
-                X_tr=X_tr_sel_df,
-                y_tr=y_tr_cls_fold,
-                X_va=X_va_sel_df,
-                y_va=y_va_cls_fold,
-                task='classification',
-                cv_folds=STACKING_CV_FOLDS,
-                random_state=RANDOM_STATE,
-                compute_params=COMPUTE_PARAMS
-            )
-            all_fold_models_cls.append(best_stack_cls) # Store the best stack for this fold
-
-
-            # --- 5.8 Evaluate Best Stack Model on Fold's Validation Data ---
-            print(f"\n  --- 5.8 Evaluating Best Stack on Fold {fold+1} Validation Data ---")
-
-            # Regression Evaluation
-            if best_stack_reg:
-                y_va_pred_reg = best_stack_reg.predict(X_va_sel_df) # Predict on validation set (selected features)
-                r2_va = r2_score(y_va_reg_fold, y_va_pred_reg)
-                mae_va = mean_absolute_error(y_va_reg_fold, y_va_pred_reg)
-                outer_fold_results_reg['R2'].append(r2_va)
-                outer_fold_results_reg['MAE'].append(mae_va)
-                print(f"    Regression Stack Validation - R2: {r2_va:.4f}, MAE: {mae_va:.4f}")
-            else:
-                outer_fold_results_reg['R2'].append(np.nan)
-                outer_fold_results_reg['MAE'].append(np.nan)
-                print("    Regression Stack - No model selected.")
-
-            # Classification Evaluation
-            if best_stack_cls:
-                y_va_pred_cls = best_stack_cls.predict(X_va_sel_df)
-                y_va_pred_proba_cls = best_stack_cls.predict_proba(X_va_sel_df)[:, 1]
-                acc_va = accuracy_score(y_va_cls_fold, y_va_pred_cls)
-                try:
-                    roc_auc_va = roc_auc_score(y_va_cls_fold, y_va_pred_proba_cls)
-                except ValueError:
-                    print("    Warning: ROC AUC score could not be calculated (e.g., only one class present in validation fold). Setting to NaN.")
-                    roc_auc_va = np.nan
-                outer_fold_results_cls['Accuracy'].append(acc_va)
-                outer_fold_results_cls['ROC-AUC'].append(roc_auc_va)
-                print(f"    Classification Stack Validation - Accuracy: {acc_va:.4f}, ROC-AUC: {roc_auc_va:.4f}")
-            else:
-                outer_fold_results_cls['Accuracy'].append(np.nan)
-                outer_fold_results_cls['ROC-AUC'].append(np.nan)
-                print("    Classification Stack - No model selected.")
-
-            fold_end_time = time.time()
-            print(f"===== Outer Fold {fold+1} completed in {fold_end_time - fold_start_time:.2f} seconds ====")
+            # Store results for this fold
+            outer_fold_results_reg['R2'].append(r2_va)
+            outer_fold_results_reg['MAE'].append(mae_va)
+            outer_fold_results_cls['Accuracy'].append(acc_va)
+            outer_fold_results_cls['ROC-AUC'].append(roc_auc_va)
+            fold_selected_features_list.append(selected_features)
+            fold_scalers.append(scaler)
+            fold_selectors.append(selector)
+            all_fold_models_reg.append(best_stack_reg)
+            all_fold_models_cls.append(best_stack_cls)
 
         except Exception as e:
             import traceback
-            print(f"\n!!!!!! ERROR CAUGHT IN OUTER FOLD {fold+1} !!!!!")
+            print(f"\n!!!!!! ERROR IN OUTER FOLD {fold+1} !!!!!")
             print(f"Error Type: {type(e).__name__}")
             print(f"Error Message: {e}")
             print("Traceback:")
             print(traceback.format_exc())
-            print("Continuing to next fold if possible, or returning current results...")
-            # Depending on severity, you might want to 'break' or 'raise e' here.
-            # For debugging, we'll let it potentially continue to see if other folds work.
+            
+            # Store empty/default results for this fold
+            outer_fold_results_reg['R2'].append(np.nan)
+            outer_fold_results_reg['MAE'].append(np.nan)
+            outer_fold_results_cls['Accuracy'].append(np.nan)
+            outer_fold_results_cls['ROC-AUC'].append(np.nan)
+            fold_selected_features_list.append([])
+            fold_scalers.append(None)
+            fold_selectors.append(None)
+            all_fold_models_reg.append(None)
+            all_fold_models_cls.append(None)
+            
+            print(f"Stored default values for fold {fold+1}. Continuing to next fold...")
+            continue
 
     # End of outer loop
     total_cv_time = time.time() - start_time_cv

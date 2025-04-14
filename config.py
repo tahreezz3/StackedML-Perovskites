@@ -20,8 +20,8 @@ STACKING_CV_FOLDS = 5 # Number of folds for inner CV within stacking meta-learne
 TUNE_ALL_BASE_MODELS = True # Set this according to preference
 
 # === Optuna Configuration ===
-OPTUNA_TRIALS_MAIN = 5  # Number of trials for key models (LGBM/XGB)
-OPTUNA_TRIALS_OTHER = 5 # Number of trials for other base models
+OPTUNA_TRIALS_MAIN = 20  # Number of trials for key models (LGBM/XGB)
+OPTUNA_TRIALS_OTHER = 10 # Number of trials for other base models
 OPTUNA_TIMEOUT = None    # Timeout in seconds for each Optuna study (None for no timeout)
 
 # === Meta-Model Configuration ===
