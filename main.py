@@ -37,11 +37,12 @@ from model_definitions import (
     get_base_regressors, get_base_classifiers,
     get_meta_regressor_candidates, get_meta_classifier_candidates,
     # Optimization functions - regression
-    optimize_lgbm_reg, optimize_xgb_reg, optimize_ridge,
+    optimize_lgbm_reg, optimize_xgb_reg, optimize_ridge_reg,
     optimize_rf_reg, optimize_knn_reg, optimize_mlp_reg,
     # Optimization functions - classification
     optimize_lgbm_cls, optimize_xgb_cls, optimize_logistic_regression_cls,
     optimize_rf_cls, optimize_mlp_cls, optimize_svc_cls,
+    # best stacking model
     select_best_stack
 )
 from outer_cv import run_outer_cv_loop
@@ -112,7 +113,7 @@ print(f"\n--- 4. Running Outer {N_SPLITS_OUTER_CV}-Fold Cross-Validation Loop --
 OPTIMIZATION_FUNCTIONS_REG = {
     'LGBM': optimize_lgbm_reg,
     'XGB': optimize_xgb_reg,
-    'Ridge': optimize_ridge,
+    'Ridge': optimize_ridge_reg,
     'RandomForest': optimize_rf_reg,
     'MLP': optimize_mlp_reg,
     'KNN': optimize_knn_reg, 

@@ -181,7 +181,7 @@ def optimize_rf_reg(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
         print(f"Trial failed for RF Reg: {e}")
         raise TrialPruned()
 
-def optimize_ridge(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
+def optimize_ridge_reg(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
                   X_va: np.ndarray, y_va: np.ndarray) -> float:
     """
     Optimize Ridge regression hyperparameters.
