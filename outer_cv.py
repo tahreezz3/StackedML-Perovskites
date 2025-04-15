@@ -17,9 +17,9 @@ from config import (
     RANDOM_STATE,
     OPTUNA_TIMEOUT,
     N_SPLITS_OUTER_CV, # Used for printing fold numbers
-    STACKING_CV_FOLDS, # Added parameter
-    OPTUNA_TRIALS_MAIN,  # Import from config instead of defining here
-    OPTUNA_TRIALS_OTHER,  # Import from config instead of defining here
+    STACKING_CV_FOLDS, # Used in select_best_stack calls
+    OPTUNA_TRIALS_MAIN, # Number of trials for key models
+    OPTUNA_TRIALS_OTHER, # Number of trials for other base models
     # Add any other config vars needed *directly* within the loop if not passed
 )
 # Import necessary functions/definitions (alternative: pass them as arguments)
@@ -43,13 +43,10 @@ def run_outer_cv_loop(
     FEATURE_SELECTION_METHOD,
     K_BEST_FEATURES,
     TUNE_ALL_BASE_MODELS,
-    OPTUNA_TRIALS_MAIN,
-    OPTUNA_TRIALS_OTHER,
     MODEL_REGRESSORS, # Dict defining base regressors
     MODEL_CLASSIFIERS, # Dict defining base classifiers
     STACKING_META_REGRESSOR_CANDIDATES,
     STACKING_META_CLASSIFIER_CANDIDATES,
-    STACKING_CV_FOLDS, # Added parameter
     # Helper functions (passed as arguments)
     get_compute_device_params, # Function to get compute settings
     run_optuna_study, # Function to run hyperparameter tuning
@@ -131,13 +128,9 @@ def run_outer_cv_loop(
                 lgbm_params = {
                     'random_state': RANDOM_STATE,
                     'n_estimators': 100, # Consider making this configurable
-                    'device': COMPUTE_PARAMS['lgbm_device'],
+                    'device': 'cpu',
                     'verbosity': -1
                 }
-                # Conditionally add GPU parameters
-                if COMPUTE_PARAMS.get('lgbm_device') == 'gpu':
-                    lgbm_params['gpu_platform_id'] = COMPUTE_PARAMS.get('lgbm_gpu_platform_id', -1) # Default to -1 if key missing
-                    lgbm_params['gpu_device_id'] = COMPUTE_PARAMS.get('lgbm_gpu_device_id', -1)   # Default to -1 if key missing
 
                 lgbm_selector_model = lgb.LGBMRegressor(**lgbm_params)
 

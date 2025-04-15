@@ -6,6 +6,7 @@ The outer_cv.py file implements a nested cross-validation approach for machine l
 1. Tune hyperparameters for base models
 2. Use tuned base models for stacking ensemble creation
 3. Select the best meta-model (stacking model) based on performance
+4. Handle errors gracefully and maintain robustness
 
 ## DETAILED PROCESS FLOW
 
@@ -18,8 +19,9 @@ INPUT → OUTER CV LOOP → [PROCESS EACH FOLD] → OUTPUT RESULTS
 - Regression target (y_train_val_reg)
 - Classification target (y_train_val_cls)
 - Outer cross-validation split iterator (kf_outer)
+- Feature names
 - Configuration parameters
-- Helper functions
+- Helper functions and compute device parameters
 
 ### 2. OUTER CV LOOP PROCESS (For each fold)
 
@@ -29,33 +31,53 @@ INPUT → OUTER CV LOOP → [PROCESS EACH FOLD] → OUTPUT RESULTS
 └─────────────┬──────────────┘
               ▼
 ┌────────────────────────────┐
+│ Initialize Result Storage  │
+│ - Metrics per fold         │
+│ - Selected features        │
+│ - Best parameters          │
+│ - Models and components    │
+└─────────────┬──────────────┘
+              ▼
+┌────────────────────────────┐
 │ Split Data into Train/Val  │
+│ Print fold statistics      │
 └─────────────┬──────────────┘
               ▼
 ┌────────────────────────────┐
 │ Apply Feature Scaling      │
+│ Store scaler for fold      │
 └─────────────┬──────────────┘
               ▼
 ┌────────────────────────────┐
-│ Perform Feature Selection  │
+│ Feature Selection:         │
+│ - LGBM-based               │
+│ - K-best (f_regression)    │
+│ - K-best (mutual_info)     │
+│ - None (use all features)  │
 └─────────────┬──────────────┘
               ▼
 ┌────────────────────────────┐
 │ Hyperparameter Tuning      │
-│ (Base Models)              │
+│ With Error Handling        │
 └─────────────┬──────────────┘
               ▼
 ┌────────────────────────────┐
 │ Build & Select Best Stack  │
-│ (Meta-Models)              │
+│ For Both Tasks:            │
+│ - Regression               │
+│ - Classification           │
 └─────────────┬──────────────┘
               ▼
 ┌────────────────────────────┐
 │ Evaluate on Validation Set │
+│ Store Performance Metrics  │
 └─────────────┬──────────────┘
               ▼
 ┌────────────────────────────┐
-│ Store Results & Models     │
+│ Error Handling:            │
+│ - Catch exceptions         │
+│ - Store default values     │
+│ - Continue to next fold    │
 └────────────────────────────┘
 ```
 
@@ -67,34 +89,29 @@ INPUT → OUTER CV LOOP → [PROCESS EACH FOLD] → OUTPUT RESULTS
 └───────────────┬───────────────┘
                 ▼
 ┌───────────────────────────────┐
-│ Determine Models to Tune      │
-│ Based on Config Settings      │
+│ Configure Models to Tune:     │
+│ - Main models (more trials)   │
+│ - Other models (fewer trials) │
 └───────────────┬───────────────┘
                 ▼
 ┌───────────────────────────────┐
-│ Loop Through Regressors       │
+│ Regression Models:            │
+│ - Check optimization function │
+│ - Set trials and direction    │
+│ - Configure model parameters  │
 └───────────────┬───────────────┘
                 ▼
 ┌───────────────────────────────┐
-│ For Each Regressor:           │
-│ - Check if Optimization       │
-│   Function Exists             │
-│ - Determine Number of Trials  │
-│ - Set Optimization Direction  │
+│ Run Optuna Studies:           │
+│ - With timeout                │
+│ - Error handling per model    │
+│ - Store best parameters       │
 └───────────────┬───────────────┘
                 ▼
 ┌───────────────────────────────┐
-│ Run Optuna Study for Each     │
-│ Model with Objective Function │
-└───────────────┬───────────────┘
-                ▼
-┌───────────────────────────────┐
-│ Store Best Parameters         │
-└───────────────┬───────────────┘
-                ▼
-┌───────────────────────────────┐
-│ Repeat Process for            │
-│ Classification Models         │
+│ Classification Models:        │
+│ - Similar process as above    │
+│ - Maximize metrics           │
 └───────────────────────────────┘
 ```
 
@@ -106,72 +123,85 @@ INPUT → OUTER CV LOOP → [PROCESS EACH FOLD] → OUTPUT RESULTS
 └───────────────┬───────────────┘
                 ▼
 ┌───────────────────────────────┐
-│ Regression Stacking:          │
-│ - Use Base Model Definitions  │
-│ - Apply Tuned Parameters      │
-│ - Try Multiple Meta-Models    │
+│ Regression Stack:             │
+│ - Use tuned base models       │
+│ - Try meta-regressors         │
+│ - Cross-validation            │
 └───────────────┬───────────────┘
                 ▼
 ┌───────────────────────────────┐
-│ Select Best Regression Stack  │
-│ Based on Validation Metrics   │
+│ Classification Stack:         │
+│ - Use tuned base models       │
+│ - Try meta-classifiers        │
+│ - Cross-validation            │
 └───────────────┬───────────────┘
                 ▼
 ┌───────────────────────────────┐
-│ Classification Stacking:      │
-│ - Use Base Model Definitions  │
-│ - Apply Tuned Parameters      │
-│ - Try Multiple Meta-Models    │
+│ Evaluate Both Stacks:         │
+│ - R2 and MAE for regression   │
+│ - Accuracy and ROC-AUC for    │
+│   classification              │
 └───────────────┬───────────────┘
                 ▼
 ┌───────────────────────────────┐
-│ Select Best Classification    │
-│ Stack Based on Validation     │
-│ Metrics                       │
-└───────────────┬───────────────┘
-                ▼
-┌───────────────────────────────┐
-│ Return Best Stack Models      │
+│ Store Best Models and Results │
 └───────────────────────────────┘
 ```
 
 ## IMPORTANT POINTS
 
-1. **Hyperparameter Tuning:**
-   - Tuning is performed on the base models only
-   - Optuna is used for Bayesian optimization of hyperparameters
-   - Each model has its own objective function for optimization
-   - Tuning runs for a configurable number of trials (OPTUNA_TRIALS_MAIN or OPTUNA_TRIALS_OTHER)
-   - The best parameters are stored for each model and fold
+1. **Robust Error Handling:**
+   - Each major step has try-except blocks
+   - Default values stored for failed folds
+   - Detailed error logging and tracebacks
+   - Continues to next fold on failure
 
-2. **Stacking Process:**
-   - Base models are initialized with their tuned parameters from the previous step
-   - Multiple meta-model candidates are evaluated (from STACKING_META_REGRESSOR_CANDIDATES and STACKING_META_CLASSIFIER_CANDIDATES)
-   - The select_best_stack function tests different meta-models and returns the best stack
-   - Stacking uses cross-validation (STACKING_CV_FOLDS) during training
+2. **Hyperparameter Tuning:**
+   - Different trial counts for main vs other models
+   - Configurable optimization settings
+   - Timeout limits for optimization
+   - Stores parameters per model and fold
 
-3. **Key Workflow Distinction:**
-   - Base models use their tuned hyperparameters in each meta-model run
-   - Meta-models (the models that combine base model predictions) are not tuned separately
-   - The best meta-model is selected by trying each candidate and measuring performance
+3. **Feature Selection Options:**
+   - LGBM-based importance selection
+   - K-best with f_regression
+   - K-best with mutual_info_regression
+   - Option to skip selection
 
-4. **Final Output:**
-   - The process returns performance metrics for each fold
-   - Best hyperparameters for all models across folds
-   - Preprocessing components (scalers, feature selectors)
-   - Trained stacked ensemble models
+4. **Stacking Process:**
+   - Separate stacks for regression and classification
+   - Cross-validation during stacking
+   - Multiple meta-model candidates
+   - Comprehensive metric tracking
 
-## IMPLEMENTATION DETAILS
+5. **Performance Tracking:**
+   - Regression: R2 and MAE
+   - Classification: Accuracy and ROC-AUC
+   - Stores results per fold
+   - Handles missing/failed metrics
 
-1. **For Each Outer CV Fold:**
-   - Data is split, scaled, and feature selection is applied
-   - Hyperparameters are tuned for base models (if configured)
-   - Tuned base models are used in stacking ensemble
-   - Different meta-models are tested without additional tuning
-   - Best stack is evaluated on validation data
-   - Results are collected for final reporting
+## OUTPUTS
 
-2. **In Every Stacking Iteration:**
-   - Base models use their previously tuned parameters
-   - The meta-model combines predictions without additional tuning
-   - Selection is based on validation set performance
+The process returns:
+1. Outer fold results (regression and classification)
+2. Selected features per fold
+3. Best parameters for all models
+4. Fitted preprocessing components
+5. Trained stack models for both tasks
+
+## IMPLEMENTATION NOTES
+
+1. **Compute Configuration:**
+   - Configurable compute resources
+   - Device-specific settings
+   - Resource-aware optimization
+
+2. **Data Management:**
+   - Maintains DataFrame structure
+   - Tracks feature names
+   - Handles data transformations
+
+3. **Validation:**
+   - Comprehensive metric tracking
+   - Proper handling of edge cases
+   - Robust error management

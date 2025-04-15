@@ -36,7 +36,6 @@ from config import *
 from model_definitions import (
     get_base_regressors, get_base_classifiers,
     get_meta_regressor_candidates, get_meta_classifier_candidates,
-    get_final_model_instance,
     # Optimization functions - regression
     optimize_lgbm_reg, optimize_xgb_reg, optimize_ridge,
     optimize_rf_reg, optimize_knn_reg, optimize_mlp_reg,

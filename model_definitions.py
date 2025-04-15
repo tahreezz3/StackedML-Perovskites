@@ -1,7 +1,7 @@
 import numpy as np
 import lightgbm as lgb
 import xgboost as xgb
-import shap
+from optuna import Trial
 from optuna.exceptions import TrialPruned
 from functools import partial
 from utils import get_compute_device_params
@@ -304,7 +304,10 @@ def optimize_lgbm_cls(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
         y_va: Validation targets
     
     Returns:
-        float: ROC-AUC score on validation set
+        float: ROC-AUC score (optimization metric)
+        
+    Note:
+        While we optimize for ROC-AUC, we also track accuracy for interpretability.
     """
     params = {
         'objective': 'binary', 'metric': 'auc', 'n_estimators': 1000,
@@ -324,20 +327,38 @@ def optimize_lgbm_cls(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
         pruning_callback = partial(optuna_lgbm_pruning_callback, trial, 'auc')
 
         model.fit(X_tr, y_tr, eval_set=[(X_va, y_va)], eval_metric='auc',
-                  callbacks=[pruning_callback, # Use custom pruning callback
+                  callbacks=[pruning_callback,
                              lgb.early_stopping(stopping_rounds=50, verbose=False)])
-        preds = model.predict_proba(X_va)[:, 1]
-        score = roc_auc_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("ROC-AUC score is NaN")
-        return score
-    except TrialPruned as e: # Catch pruned trials specifically
+        
+        # Get both probability and class predictions
+        y_pred_proba = model.predict_proba(X_va)[:, 1]
+        y_pred = model.predict(X_va)
+        
+        # Calculate both metrics
+        roc_auc = roc_auc_score(y_va, y_pred_proba)
+        acc = accuracy_score(y_va, y_pred)
+        
+        print(f"    Trial metrics - ROC-AUC: {roc_auc:.4f}, Accuracy: {acc:.4f}")
+        
+        if np.isnan(roc_auc): 
+            raise TrialPruned("ROC-AUC score is NaN")
+        return roc_auc
+        
+    except TrialPruned as e:
         print(f"Trial pruned during optimization: {e}")
-        raise # Re-raise TrialPruned for Optuna
+        raise
     except Exception as e:
         print(f"Trial failed for LGBM Cls: {e}")
-        raise TrialPruned() # Prune on other errors
+        raise TrialPruned()
 
-def optimize_xgb_cls(trial, X_tr, y_tr, X_va, y_va):
+def optimize_xgb_cls(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
+                    X_va: np.ndarray, y_va: np.ndarray) -> float:
+    """
+    Optimize XGBoost classifier hyperparameters.
+    
+    Note:
+        While we optimize for ROC-AUC, we also track accuracy for interpretability.
+    """
     params = {
         'objective': 'binary:logistic', 'n_estimators': 1000,
         'eta': trial.suggest_float('eta', 0.005, 0.1, log=True),
@@ -346,7 +367,9 @@ def optimize_xgb_cls(trial, X_tr, y_tr, X_va, y_va):
         'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
         'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0, log=True),
         'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 10.0, log=True),
-        'tree_method': COMPUTE_PARAMS['xgb_tree_method'], 'random_state': RANDOM_STATE, 'verbosity': 0
+        'tree_method': COMPUTE_PARAMS['xgb_tree_method'],
+        'random_state': RANDOM_STATE,
+        'verbosity': 0
     }
     xgb_params = params.copy()
     xgb_params['alpha'] = xgb_params.pop('reg_alpha')
@@ -354,38 +377,79 @@ def optimize_xgb_cls(trial, X_tr, y_tr, X_va, y_va):
 
     model = xgb.XGBClassifier(**xgb_params)
     try:
-        # Simplest fit call for diagnostics - no early stopping/pruning here
         model.fit(X_tr, y_tr)
-        preds = model.predict_proba(X_va)[:, 1]
-        score = roc_auc_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("ROC-AUC score is NaN")
-        return score
+        
+        # Get both probability and class predictions
+        y_pred_proba = model.predict_proba(X_va)[:, 1]
+        y_pred = model.predict(X_va)
+        
+        # Calculate both metrics
+        roc_auc = roc_auc_score(y_va, y_pred_proba)
+        acc = accuracy_score(y_va, y_pred)
+        
+        print(f"    Trial metrics - ROC-AUC: {roc_auc:.4f}, Accuracy: {acc:.4f}")
+        
+        if np.isnan(roc_auc):
+            print(f"Trial pruned: ROC-AUC score is NaN")
+            raise TrialPruned("ROC-AUC score is NaN")
+        return roc_auc
+    except TrialPruned as e:
+        print(f"Trial pruned during optimization: {e}")
+        raise
     except Exception as e:
         print(f"Trial failed for XGB Cls: {e}")
         raise TrialPruned()
 
-def optimize_rf_cls(trial, X_tr, y_tr, X_va, y_va):
-    params = {
-        'n_estimators': trial.suggest_int('n_estimators', 50, 500),
-        'max_depth': trial.suggest_int('max_depth', 5, 50, log=True),
-        'min_samples_split': trial.suggest_int('min_samples_split', 2, 20),
-        'min_samples_leaf': trial.suggest_int('min_samples_leaf', 1, 20),
-        'max_features': trial.suggest_float('max_features', 0.1, 1.0),
-        'class_weight': trial.suggest_categorical('class_weight', ['balanced', None]),
-        'random_state': RANDOM_STATE, 'n_jobs': -1
-    }
-    model = RandomForestClassifier(**params)
+def optimize_rf_cls(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
+                   X_va: np.ndarray, y_va: np.ndarray) -> float:
+    """
+    Optimize Random Forest classifier hyperparameters.
+    
+    Note:
+        While we optimize for ROC-AUC, we also track accuracy for interpretability.
+    """
     try:
+        params = {
+            'n_estimators': trial.suggest_int('n_estimators', 50, 500),
+            'max_depth': trial.suggest_int('max_depth', 5, 50, log=True),
+            'min_samples_split': trial.suggest_int('min_samples_split', 2, 20),
+            'min_samples_leaf': trial.suggest_int('min_samples_leaf', 1, 20),
+            'max_features': trial.suggest_float('max_features', 0.1, 1.0),
+            'class_weight': trial.suggest_categorical('class_weight', ['balanced', None]),
+            'random_state': RANDOM_STATE,
+            'n_jobs': -1
+        }
+        model = RandomForestClassifier(**params)
         model.fit(X_tr, y_tr)
-        preds = model.predict_proba(X_va)[:, 1]
-        score = roc_auc_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("ROC-AUC score is NaN")
-        return score
+        
+        # Get both probability and class predictions
+        y_pred_proba = model.predict_proba(X_va)[:, 1]
+        y_pred = model.predict(X_va)
+        
+        # Calculate both metrics
+        roc_auc = roc_auc_score(y_va, y_pred_proba)
+        acc = accuracy_score(y_va, y_pred)
+        
+        print(f"    Trial metrics - ROC-AUC: {roc_auc:.4f}, Accuracy: {acc:.4f}")
+        
+        if np.isnan(roc_auc):
+            raise TrialPruned("ROC-AUC score is NaN")
+        return roc_auc
+    except TrialPruned as e:
+        print(f"Trial pruned during optimization: {e}")
+        raise
     except Exception as e:
         print(f"Trial failed for RF Cls: {e}")
         raise TrialPruned()
 
-def optimize_logistic_regression_cls(trial, X_tr, y_tr, X_va, y_va):
+def optimize_logistic_regression_cls(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
+                                   X_va: np.ndarray, y_va: np.ndarray) -> float:
+    """
+    Optimize Logistic Regression hyperparameters.
+    
+    Note:
+        While we optimize for ROC-AUC, we also track accuracy for interpretability.
+    """
     C = trial.suggest_float('C', 1e-4, 1e2, log=True)
     solver = trial.suggest_categorical('solver', ['liblinear', 'saga'])
     penalty = trial.suggest_categorical('penalty', ['l1', 'l2'])
@@ -394,21 +458,38 @@ def optimize_logistic_regression_cls(trial, X_tr, y_tr, X_va, y_va):
     elif solver == 'saga' and penalty in ['l1', 'l2']: valid_combo = True
 
     if not valid_combo:
-      raise TrialPruned(f"Invalid combo: solver={solver}, penalty={penalty}")
+        raise TrialPruned(f"Invalid combo: solver={solver}, penalty={penalty}")
 
     model = LogisticRegression(C=C, solver=solver, penalty=penalty, max_iter=2000,
                                random_state=RANDOM_STATE, n_jobs=-1, class_weight='balanced')
     try:
         model.fit(X_tr, y_tr)
-        preds = model.predict_proba(X_va)[:, 1]
-        score = roc_auc_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("ROC-AUC score is NaN")
-        return score
+        
+        # Get both probability and class predictions
+        y_pred_proba = model.predict_proba(X_va)[:, 1]
+        y_pred = model.predict(X_va)
+        
+        # Calculate both metrics
+        roc_auc = roc_auc_score(y_va, y_pred_proba)
+        acc = accuracy_score(y_va, y_pred)
+        
+        print(f"    Trial metrics - ROC-AUC: {roc_auc:.4f}, Accuracy: {acc:.4f}")
+        
+        if np.isnan(roc_auc):
+            raise TrialPruned("ROC-AUC score is NaN")
+        return roc_auc
     except ValueError as e:
         print(f"Trial failed for LR: {e}")
         raise TrialPruned()
 
-def optimize_mlp_cls(trial, X_tr, y_tr, X_va, y_va):
+def optimize_mlp_cls(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
+                    X_va: np.ndarray, y_va: np.ndarray) -> float:
+    """
+    Optimize Multi-layer Perceptron classifier hyperparameters.
+    
+    Note:
+        While we optimize for ROC-AUC, we also track accuracy for interpretability.
+    """
     hidden_layer_sizes = (trial.suggest_int('n_units_l1', 32, 128), trial.suggest_int('n_units_l2', 16, 64))
     activation = trial.suggest_categorical('activation', ['relu', 'tanh', 'logistic'])
     solver = trial.suggest_categorical('solver', ['adam', 'sgd'])
@@ -427,15 +508,32 @@ def optimize_mlp_cls(trial, X_tr, y_tr, X_va, y_va):
     model = MLPClassifier(**params)
     try:
         model.fit(X_tr, y_tr)
-        preds = model.predict_proba(X_va)[:, 1]
-        score = roc_auc_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("ROC-AUC score is NaN")
-        return score
+        
+        # Get both probability and class predictions
+        y_pred_proba = model.predict_proba(X_va)[:, 1]
+        y_pred = model.predict(X_va)
+        
+        # Calculate both metrics
+        roc_auc = roc_auc_score(y_va, y_pred_proba)
+        acc = accuracy_score(y_va, y_pred)
+        
+        print(f"    Trial metrics - ROC-AUC: {roc_auc:.4f}, Accuracy: {acc:.4f}")
+        
+        if np.isnan(roc_auc):
+            raise TrialPruned("ROC-AUC score is NaN")
+        return roc_auc
     except Exception as e:
         print(f"Trial failed for MLP Cls: {e}")
         raise TrialPruned()
 
-def optimize_svc_cls(trial, X_tr, y_tr, X_va, y_va):
+def optimize_svc_cls(trial: Trial, X_tr: np.ndarray, y_tr: np.ndarray,
+                    X_va: np.ndarray, y_va: np.ndarray) -> float:
+    """
+    Optimize Support Vector classifier hyperparameters.
+    
+    Note:
+        While we optimize for ROC-AUC, we also track accuracy for interpretability.
+    """
     kernel = trial.suggest_categorical('kernel', ['linear', 'rbf', 'poly'])
     
     if kernel == 'linear':
@@ -460,10 +558,20 @@ def optimize_svc_cls(trial, X_tr, y_tr, X_va, y_va):
     model = SVC(**params)
     try:
         model.fit(X_tr, y_tr)
-        preds = model.predict_proba(X_va)[:, 1]
-        score = roc_auc_score(y_va, preds)
-        if np.isnan(score): raise TrialPruned("ROC-AUC score is NaN")
-        return score
+        
+        # Get both probability and class predictions
+        y_pred_proba = model.predict_proba(X_va)[:, 1]
+        y_pred = model.predict(X_va)
+        
+        # Calculate both metrics
+        roc_auc = roc_auc_score(y_va, y_pred_proba)
+        acc = accuracy_score(y_va, y_pred)
+        
+        print(f"    Trial metrics - ROC-AUC: {roc_auc:.4f}, Accuracy: {acc:.4f}")
+        
+        if np.isnan(roc_auc):
+            raise TrialPruned("ROC-AUC score is NaN")
+        return roc_auc
     except Exception as e:
         print(f"Trial failed for SVC: {e}")
         raise TrialPruned()

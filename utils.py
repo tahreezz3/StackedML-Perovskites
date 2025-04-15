@@ -24,12 +24,9 @@ warnings.filterwarnings('ignore', category=optuna.exceptions.ExperimentalWarning
 
 def get_compute_device_params():
     """
-    Returns hardcoded CPU device parameters for LGBM and XGB.
+    Returns hardcoded CPU parameters for model training.
     """
     return {
-        'lgbm_device': 'cpu',
-        'lgbm_gpu_platform_id': -1,
-        'lgbm_gpu_device_id': -1,
         'xgb_tree_method': 'hist',  # Use histogram-based algorithm for CPU
     }
 
